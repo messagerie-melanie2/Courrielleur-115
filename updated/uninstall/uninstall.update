@@ -1,0 +1,15 @@
+2023-11-23 16:50:34+0100: Performing a replace request
+2023-11-23 16:50:34+0100: PATCH DIRECTORY C:\ProgramData\Mozilla-1de4eec8-1241-4177-a864-e594e8d1fb38\updates\1FFCEB87D140132E\updates\0
+2023-11-23 16:50:34+0100: INSTALLATION DIRECTORY C:\Projets\Courrielleur-115
+2023-11-23 16:50:34+0100: WORKING DIRECTORY C:\Projets\Courrielleur-115\updated
+2023-11-23 16:50:34+0100: Begin moving destDir (C:\Projets\Courrielleur-115) to tmpDir (C:\Projets\Courrielleur-115.bak)
+2023-11-23 16:50:34+0100: rename_file: proceeding to rename the directory
+2023-11-23 16:50:34+0100: Begin moving newDir (C:\Projets\Courrielleur-115.bak/updated) to destDir (C:\Projets\Courrielleur-115)
+2023-11-23 16:50:34+0100: rename_file: proceeding to rename the directory
+2023-11-23 16:50:34+0100: Now, remove the tmpDir
+2023-11-23 16:50:39+0100: ensure_remove: failed to remove file: C:\Projets\Courrielleur-115.bak/updater.exe, rv: -1, err: 13
+2023-11-23 16:50:39+0100: ensure_remove_recursive: unable to remove directory: C:\Projets\Courrielleur-115.bak, rv: -1, err: 41
+2023-11-23 16:50:39+0100: Removing tmpDir failed, err: -1
+2023-11-23 16:50:39+0100: remove_recursive_on_reboot: failed to schedule OS reboot removal of file: C:\Projets\Courrielleur-115\tobedeleted\rep4d264fbb-a98e-4f4e-b3cb-e961795e1ce9
+2023-11-23 16:50:39+0100: succeeded
+2023-11-23 16:50:39+0100: calling QuitProgressUI

@@ -1,5 +1,5 @@
 // Default start page
-pref("mailnews.start_page.url", "https://live.thunderbird.net/%APP%/start?locale=%LOCALE%&version=%VERSION%&channel=%CHANNEL%&os=%OS%&buildid=%APPBUILDID%");
+pref("mailnews.start_page.url", "");
 
 // Start page override to load after an update. Balrog will set an appropriate
 // url for this, see whats_new_page.yml
@@ -12,8 +12,8 @@ pref("mailnews.start_page.override_url", "");
 // wizard.
 //@line 17 "$SRCDIR/comm/mail/branding/thunderbird/pref/thunderbird-branding.js"
   // release channel
-  pref("app.update.url.manual", "https://www.thunderbird.net/");
-  pref("app.update.url.details", "https://www.thunderbird.net/notes/");
+  pref("app.update.url.manual", "");
+  pref("app.update.url.details", "");
 //@line 21 "$SRCDIR/comm/mail/branding/thunderbird/pref/thunderbird-branding.js"
 
 // Interval: Time between checks for a new version (in seconds)
@@ -32,6 +32,6 @@ pref("app.update.checkInstallTime.days", 63);
 // button. default=4 days
 pref("app.update.badgeWaitTime", 345600);
 
-pref("app.vendorURL", "https://www.thunderbird.net/%LOCALE%/");
+pref("app.vendorURL", "");
 
 pref("browser.search.param.ms-pc", "MOZT");

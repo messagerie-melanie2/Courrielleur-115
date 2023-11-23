@@ -203,22 +203,16 @@ function openUILink(url, event) {
 function openLinkText(event, what) {
   switch (what) {
     case "getInvolvedURL":
-      openUILink("https://www.thunderbird.net/get-involved/", event);
       break;
     case "keyboardShortcutsURL":
-      openUILink("https://support.mozilla.org/kb/keyboard-shortcuts/", event);
+      openUILink("https://mel.din.developpement-durable.gouv.fr/aide", event);
       break;
     case "donateURL":
-      openUILink(
-        "https://give.thunderbird.net/?utm_source=thunderbird-client&utm_medium=referral&utm_content=help-menu",
-        event
-      );
       break;
     case "tourURL":
-      openUILink("https://www.thunderbird.net/features/", event);
+      openUILink("http://numerique.metier.e2.rie.gouv.fr/le-courrielleur-r118.html", event);
       break;
     case "feedbackURL":
-      openUILink("https://connect.mozilla.org/", event);
       break;
   }
 }

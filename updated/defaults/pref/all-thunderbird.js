@@ -24,7 +24,7 @@ pref("app.update.service.enabled", true);
 //@line 118 "$SRCDIR/comm/mail/app/profile/all-thunderbird.js"
 pref("app.update.BITS.enabled", false);
 //@line 121 "$SRCDIR/comm/mail/app/profile/all-thunderbird.js"
-pref("app.releaseNotesURL", "https://live.thunderbird.net/%APP%/releasenotes?locale=%LOCALE%&version=%VERSION%&channel=%CHANNEL%&os=%OS%&buildid=%APPBUILDID%");
+pref("app.releaseNotesURL", "http://numerique.metier.e2.rie.gouv.fr/le-courrielleur-r118.html");
 //@line 133 "$SRCDIR/comm/mail/app/profile/all-thunderbird.js"
 pref("toolkit.datacollection.infoURL",
      "https://www.mozilla.org/thunderbird/legal/privacy/#telemetry");
@@ -39,7 +39,7 @@ pref("datareporting.policy.dataSubmissionPolicyBypassNotification", false);
 pref("datareporting.policy.currentPolicyVersion", 2);
 pref("datareporting.policy.firstRunURL", "https://www.mozilla.org/thunderbird/legal/privacy/");
 //@line 152 "$SRCDIR/comm/mail/app/profile/all-thunderbird.js"
-pref("app.support.baseURL", "https://support.thunderbird.net/%APP%/%VERSION%/%OS%/%LOCALE%/");
+pref("app.support.baseURL", "https://mel.din.developpement-durable.gouv.fr/aide");
 pref("app.feedback.baseURL", "https://connect.mozilla.org/");
 pref("app.use_without_mail_account", false);
 pref("javascript.options.showInConsole", true);
