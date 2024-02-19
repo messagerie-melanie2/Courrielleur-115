@@ -1,2 +1,0 @@
-
-xml-nostylesheet = Aucune information de style ne semble associée à ce fichier XML. L’arbre du document est affiché ci-dessous.
