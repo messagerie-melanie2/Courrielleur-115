@@ -830,7 +830,8 @@ calRecurrenceInfo.prototype = {
                 rid = rid.getInTimezone(rdate ? rdate.timezone : startTimezone);
                 rid.addDuration(timeDiff);
                 ex.recurrenceId = rid;
-                cal.shiftItem(ex, timeDiff);
+                // #8285 Lightning met à jour les exceptions d'événement lors de la mise à jour d'un événement récurrent
+                //cal.shiftItem(ex, timeDiff);
                 modifiedExceptions.push(ex);
                 this.removeExceptionFor(exid);
             }
