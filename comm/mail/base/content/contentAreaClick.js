@@ -1,189 +1,206 @@
-/** ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Alec Flett         <alecf@netscape.com>
- *   Ben Goodger        <ben@netscape.com>
- *   Mike Pinkerton     <pinkerton@netscape.com>
- *   Blake Ross         <blakeross@telocity.com>
- *   Christopher Thomas <cst@yecc.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/**
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-  /**
-   * Extract the href from the link click event.
-   * We look for HTMLAnchorElement, HTMLAreaElement, HTMLLinkElement,
-   * HTMLInputElement.form.action, and nested anchor tags.
-   *
-   * @return href for the url being clicked
-   */
-  function hRefForClickEvent(aEvent, aDontCheckInputElement)
-  {
-    var href;
-    var isKeyCommand = (aEvent.type == "command");
-    var target =
-      isKeyCommand ? document.commandDispatcher.focusedElement : aEvent.target;
+/* import-globals-from ../../../../toolkit/content/contentAreaUtils.js */
+/* import-globals-from utilityOverlay.js */
 
-    if (target instanceof HTMLAnchorElement ||
-        target instanceof HTMLAreaElement   ||
-        target instanceof HTMLLinkElement)
-    {
-      if (target.hasAttribute("href"))
-        href = target.href;
-    }
-    else if (!aDontCheckInputElement && target instanceof HTMLInputElement)
-    {
-      if (target.form && target.form.action)
-        href = target.form.action;
-    }
-    else
-    {
-      // we may be nested inside of a link node
-      var linkNode = aEvent.originalTarget;
-      while (linkNode && !(linkNode instanceof HTMLAnchorElement))
-        linkNode = linkNode.parentNode;
+/* globals getMessagePaneBrowser */ // From aboutMessage.js
 
-      if (linkNode)
-        href = linkNode.href;
-    }
+var { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
+);
+XPCOMUtils.defineLazyModuleGetters(this, {
+  PhishingDetector: "resource:///modules/PhishingDetector.jsm",
+});
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "alternativeAddonSearchUrl",
+  "extensions.alternativeAddonSearch.url"
+);
 
-    return href;
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "canonicalAddonServerUrl",
+  "extensions.canonicalAddonServer.url"
+);
+/**
+ * Extract the href from the link click event.
+ * We look for HTMLAnchorElement, HTMLAreaElement, HTMLLinkElement,
+ * HTMLInputElement.form.action, and nested anchor tags.
+ * If the clicked element was a HTMLInputElement or HTMLButtonElement
+ * we return the form action.
+ *
+ * @returns [href, linkText] the url and the text for the link being clicked.
+ */
+function hRefForClickEvent(aEvent, aDontCheckInputElement) {
+  let target =
+    aEvent.type == "command"
+      ? document.commandDispatcher.focusedElement
+      : aEvent.target;
+
+  if (
+    HTMLImageElement.isInstance(target) &&
+    target.hasAttribute("overflowing")
+  ) {
+    // Click on zoomed image.
+    return [null, null];
   }
 
-  function messagePaneOnResize(aEvent)
-  {
-    // scale any overflowing images
-    var messagepane = document.getElementById("messagepane");
-    var doc = messagepane.contentDocument;
-    var imgs = doc.images;
-    for each (var img in imgs)
-    {
-      if (img.className == "moz-attached-image")
-      {
-        if (img.naturalWidth <= doc.body.clientWidth)
-        {
-          img.removeAttribute("isshrunk");
-          img.removeAttribute("overflowing");
-        }
-        else if (img.hasAttribute("shrinktofit"))
-        {
-          img.setAttribute("isshrunk", "true");
-          img.removeAttribute("overflowing");
-        }
-        else
-        {
-          img.setAttribute("overflowing", "true");
-          img.removeAttribute("isshrunk");
-        }
-      }
+  let href = null;
+  let linkText = null;
+  if (
+    HTMLAnchorElement.isInstance(target) ||
+    HTMLAreaElement.isInstance(target) ||
+    HTMLLinkElement.isInstance(target)
+  ) {
+    if (target.hasAttribute("href")) {
+      href = target.href;
+      linkText = gatherTextUnder(target);
+    }
+  } else if (
+    !aDontCheckInputElement &&
+    (HTMLInputElement.isInstance(target) ||
+      HTMLButtonElement.isInstance(target))
+  ) {
+    if (target.form && target.form.action) {
+      href = target.form.action;
+    }
+  } else {
+    // We may be nested inside of a link node.
+    let linkNode = aEvent.target;
+    while (linkNode && !HTMLAnchorElement.isInstance(linkNode)) {
+      linkNode = linkNode.parentNode;
+    }
+
+    if (linkNode) {
+      href = linkNode.href;
+      linkText = gatherTextUnder(linkNode);
     }
   }
+  return [href, linkText];
+}
+
+/**
+ * Check whether the click target's or its ancestor's href
+ * points to an anchor on the page.
+ *
+ * @param HTMLElement aTargetNode - the element node.
+ * @returns - true if link pointing to anchor.
+ */
+function isLinkToAnchorOnPage(aTargetNode) {
+  let url = aTargetNode.ownerDocument.URL;
+  if (!url.startsWith("http")) {
+    return false;
+  }
+
+  let linkNode = aTargetNode;
+  while (linkNode && !HTMLAnchorElement.isInstance(linkNode)) {
+    linkNode = linkNode.parentNode;
+  }
+
+  // It's not a link with an anchor.
+  if (!linkNode || !linkNode.href || !linkNode.hash) {
+    return false;
+  }
+
+  // The link's href must match the document URL.
+  if (makeURI(linkNode.href).specIgnoringRef != makeURI(url).specIgnoringRef) {
+    return false;
+  }
+
+  return true;
+}
 
 // Called whenever the user clicks in the content area,
-// should always return true for click to go through
-function contentAreaClick(aEvent)
-{
-  let href = hRefForClickEvent(aEvent);
+// should always return true for click to go through.
+function contentAreaClick(aEvent) {
+  let target = aEvent.target;
+  if (target.localName == "browser") {
+    // This is a remote browser. Nothing useful can happen in this process.
+    return true;
+  }
+
+  // If we've loaded a web page url, and the element's or its ancestor's href
+  // points to an anchor on the page, let the click go through.
+  // Otherwise fall through and open externally.
+  if (isLinkToAnchorOnPage(target)) {
+    return true;
+  }
+
+  let [href, linkText] = hRefForClickEvent(aEvent);
 
   if (!href && !aEvent.button) {
-    var target = aEvent.target;
-    // is this an image that we might want to scale?
-    const Ci = Components.interfaces;
+    // Is this an image that we might want to scale?
 
-    if (target instanceof Ci.nsIImageLoadingContent) {
-      // make sure it loaded successfully
+    if (HTMLImageElement.isInstance(target)) {
+      // Make sure it loaded successfully. No action if not or a broken link.
       var req = target.getRequest(Ci.nsIImageLoadingContent.CURRENT_REQUEST);
-      if (!req || req.imageStatus & Ci.imgIRequest.STATUS_ERROR)
-        return true;
+      if (!req || req.imageStatus & Ci.imgIRequest.STATUS_ERROR) {
+        return false;
+      }
 
-      // is it an inline attachment?
-      if (/^moz-attached-image/.test(target.className)) {
-        if (target.hasAttribute("isshrunk")) {
-          // currently shrunk to fit, so unshrink it
-          target.removeAttribute("isshrunk");
+      // Is it an image?
+      if (target.localName == "img" && target.hasAttribute("overflowing")) {
+        if (target.hasAttribute("shrinktofit")) {
+          // Currently shrunk to fit, so unshrink it.
           target.removeAttribute("shrinktofit");
-          target.setAttribute("overflowing", "true");
+        } else {
+          // User wants to shrink now.
+          target.setAttribute("shrinktofit", true);
         }
-        else if (target.hasAttribute("overflowing")) {
-          // user wants to shrink now
-          target.setAttribute("isshrunk", "true");
-          target.setAttribute("shrinktofit", "true");
-          target.removeAttribute("overflowing");
-        }
+
+        return false;
       }
     }
     return true;
   }
 
-  if (!href || aEvent.button == 2)
+  if (!href || aEvent.button == 2) {
     return true;
+  }
 
   // We want all about, http and https links in the message pane to be loaded
   // externally in a browser, therefore we need to detect that here and redirect
   // as necessary.
   let uri = makeURI(href);
-  if (Components.classes["@mozilla.org/uriloader/external-protocol-service;1"]
-                .getService(Components.interfaces.nsIExternalProtocolService)
-                .isExposedProtocol(uri.scheme) &&
-      !uri.schemeIs("http") && !uri.schemeIs("https"))
+  if (
+    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
+      .getService(Ci.nsIExternalProtocolService)
+      .isExposedProtocol(uri.scheme) &&
+    !uri.schemeIs("http") &&
+    !uri.schemeIs("https")
+  ) {
     return true;
+  }
+
+  // Add-on names in the Add-On Manager are links, but we don't want to do
+  // anything with them.
+  if (uri.schemeIs("addons")) {
+    return true;
+  }
 
   // Now we're here, we know this should be loaded in an external browser, so
   // prevent the default action so we don't try and load it here.
   aEvent.preventDefault();
 
-  // let the phishing detector check the link
-  if (!gPhishingDetector.warnOnSuspiciousLinkClick(href))
-    return false;
+  // Let the phishing detector check the link.
+  let urlPhishCheckResult = PhishingDetector.warnOnSuspiciousLinkClick(
+    window,
+    href,
+    linkText
+  );
+  if (urlPhishCheckResult === 1) {
+    return false; // Block request
+  }
+
+  if (urlPhishCheckResult === 0) {
+    // Use linkText instead.
+    openLinkExternally(linkText);
+    return true;
+  }
 
   openLinkExternally(href);
   return true;
-}
-
-/**
- * Forces a url to open in an external application according to the protocol
- * service settings.
- *
- * @param url  A url string or an nsIURI containing the url to open.
- */
-function openLinkExternally(url)
-{
-  let uri = url;
-  if (!(uri instanceof Components.interfaces.nsIURI))
-    uri = Components.classes["@mozilla.org/network/io-service;1"]
-                    .getService(Components.interfaces.nsIIOService)
-                    .newURI(url, null, null);
-
-  Components.classes["@mozilla.org/uriloader/external-protocol-service;1"]
-            .getService(Components.interfaces.nsIExternalProtocolService)
-            .loadUrl(uri);
 }

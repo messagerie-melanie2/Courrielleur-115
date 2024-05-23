@@ -1,52 +1,32 @@
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is the Mozilla Browser code.
-#
-# The Initial Developer of the Original Code is
-# IBM Corporation.
-# Portions created by the Initial Developer are Copyright (C) 2004
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#  Brian Ryner <bryner@brianryner.com>
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or
-# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH		= ../..
-topsrcdir	= @top_srcdir@
-srcdir		= @srcdir@
-VPATH		= @srcdir@
-
-include $(DEPTH)/config/autoconf.mk
+STANDALONE_MAKEFILE := 1
+# DIST_SUBDIR := mail  # Not sure why TB is not using this
 
 include $(topsrcdir)/config/rules.mk
 
 MOZ_PKG_REMOVALS = $(srcdir)/removed-files.in
 
-MOZ_PKG_MANIFEST_P = $(srcdir)/package-manifest.in
+MOZ_PKG_MANIFEST = $(srcdir)/package-manifest.in
+# Some files have been already bundled with xulrunner
+ifndef SYSTEM_LIBXUL
+MOZ_PKG_FATAL_WARNINGS = 1
+endif
+
+# When packaging an artifact build not all xpt files expected by the
+# packager will be present.
+ifdef MOZ_ARTIFACT_BUILDS
+MOZ_PKG_FATAL_WARNINGS =
+endif
+
+DEFINES += -DPKG_LOCALE_MANIFEST=$(topobjdir)/comm/mail/installer/locale-manifest.in
+MOZ_CHROME_LOCALE_ENTRIES=@RESPATH@/chrome/
+
+MOZ_PKG_DUPEFLAGS = \
+	-f $(srcdir)/allowed-dupes.mn \
+	$(NULL)
 
 MOZ_NONLOCALIZED_PKG_LIST = \
 	xpcom \
@@ -57,75 +37,159 @@ MOZ_NONLOCALIZED_PKG_LIST = \
 
 MOZ_LOCALIZED_PKG_LIST = $(AB_CD)
 
-DEFINES += -DAB_CD=$(AB_CD) -DMOZ_APP_NAME=$(MOZ_APP_NAME) -DPREF_DIR=$(PREF_DIR)
-ifdef MOZ_ENABLE_GNOME_COMPONENT
-DEFINES += -DMOZ_ENABLE_GNOME_COMPONENT=1
+DEFINES += -DMOZ_APP_NAME=$(MOZ_APP_NAME) -DPREF_DIR=$(PREF_DIR)
+
+ifdef NIGHTLY_BUILD
+DEFINES += -DNIGHTLY_BUILD=1
 endif
 
-ifeq (gtk2, $(MOZ_WIDGET_TOOLKIT))
-DEFINES += -DMOZ_GTK2=1
+ifdef MOZ_DEBUG
+DEFINES += -DMOZ_DEBUG=1
 endif
 
-ifdef _MSC_VER
-DEFINES += -D_MSC_VER=$(_MSC_VER)
+ifeq ($(MOZ_WIDGET_TOOLKIT),gtk)
+DEFINES += -DMOZ_GTK=1
 endif
 
-ifeq ($(MOZ_CHROME_FILE_FORMAT), jar)
-DEFINES += -DJAREXT=.jar
-else
+ifdef MOZ_SYSTEM_NSPR
+DEFINES += -DMOZ_SYSTEM_NSPR=1
+endif
+
+ifdef MOZ_SYSTEM_NSS
+DEFINES += -DMOZ_SYSTEM_NSS=1
+endif
+
+ifdef MOZ_ARTIFACT_BUILDS
+DEFINES += -DMOZ_ARTIFACT_BUILDS=1
+DEFINES += -DMZLA_LIBRNP=1
+endif
+
 DEFINES += -DJAREXT=
-endif
 
-ifdef MOZ_ANGLE
-DEFINES += -DMOZ_ANGLE=$(MOZ_ANGLE)
-DEFINES += -DMOZ_D3DX9_DLL=$(MOZ_D3DX9_DLL)
-DEFINES += -DMOZ_D3DCOMPILER_DLL=$(MOZ_D3DCOMPILER_DLL)
+ifdef MOZ_ANGLE_RENDERER
+DEFINES += -DMOZ_ANGLE_RENDERER=$(MOZ_ANGLE_RENDERER)
+ifdef MOZ_D3DCOMPILER_VISTA_DLL
+DEFINES += -DMOZ_D3DCOMPILER_VISTA_DLL=$(MOZ_D3DCOMPILER_VISTA_DLL)
+endif
 endif
 
 ifdef MOZ_UPDATER
 DEFINES += -DMOZ_UPDATER=1
 endif
 
-include $(MOZILLA_SRCDIR)/ipc/app/defs.mk
 DEFINES += -DMOZ_CHILD_PROCESS_NAME=$(MOZ_CHILD_PROCESS_NAME)
 
-ifdef MOZ_PKG_MANIFEST_P
-MOZ_PKG_MANIFEST = package-manifest
+# Set MSVC dlls version to package, if any.
+ifdef MOZ_NO_DEBUG_RTL
+ifdef WIN32_REDIST_DIR
+DEFINES += -DMOZ_PACKAGE_MSVC_DLLS=1
+DEFINES += -DMSVC_C_RUNTIME_DLL=$(MSVC_C_RUNTIME_DLL)
+ifdef MSVC_C_RUNTIME_1_DLL
+DEFINES += -DMSVC_C_RUNTIME_1_DLL=$(MSVC_C_RUNTIME_1_DLL)
+endif
+DEFINES += -DMSVC_CXX_RUNTIME_DLL=$(MSVC_CXX_RUNTIME_DLL)
+endif
+ifdef WIN_UCRT_REDIST_DIR
+DEFINES += -DMOZ_PACKAGE_WIN_UCRT_DLLS=1
+endif
+endif
 
-$(MOZ_PKG_MANIFEST): $(MOZ_PKG_MANIFEST_P) $(GLOBAL_DEPS)
-	$(PYTHON) $(MOZILLA_SRCDIR)/config/Preprocessor.py $(DEFINES) $(ACDEFINES) $< > $@
+ifneq (,$(filter WINNT Darwin Android,$(OS_TARGET)))
+DEFINES += -DMOZ_SHARED_MOZGLUE=1
+endif
+
+ifdef NECKO_WIFI
+DEFINES += -DNECKO_WIFI
+endif
+
+ifdef MOZ_BUNDLED_FONTS
+DEFINES += -DMOZ_BUNDLED_FONTS=1
+endif
+
+ifdef MAKENSISU
+DEFINES += -DHAVE_MAKENSISU=1
+endif
+
+ifdef MOZ_BACKGROUNDTASKS
+DEFINES += -DMOZ_BACKGROUNDTASKS=1
+endif
+
+ifdef MOZ_PREF_EXTENSIONS
+DEFINES += -DMOZ_PREF_EXTENSIONS=1
 endif
 
 ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
-MOZ_PKG_MAC_DSSTORE=branding/dsstore
-MOZ_PKG_MAC_BACKGROUND=branding/background.png
-MOZ_PKG_MAC_ICON=branding/disk.icns
-MOZ_PKG_MAC_EXTRA=--symlink "/Applications:/ "
+MOZ_PKG_MAC_DSSTORE=$(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/dsstore
+MOZ_PKG_MAC_BACKGROUND=$(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/background.png
+MOZ_PKG_MAC_ICON=$(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/disk.icns
+MOZ_PKG_MAC_EXTRA=--symlink '/Applications:/ '
 endif
+
+# The packager minifies two different types of files: non-JS (mostly property
+# files for l10n), and JS.  Setting MOZ_PACKAGER_MINIFY only minifies the
+# former.  We don't yet minify JS, due to concerns about debuggability.
+#
+# Also, the JS minification setup really only works correctly on Android:
+# we need extra setup to use the newly-built shell for Linux and Windows,
+# and Mac requires some extra care due to cross-compilation.
+MOZ_PACKAGER_MINIFY=1
 
 NON_OMNIJAR_FILES = defaults/messenger/mailViews.dat
 
-ifndef LIBXUL_SDK
-INSTALL_SDK = 1
-endif
+UPLOAD_EXTRA_FILES = $(MOZ_BUILT_FROM_FILE)
+include $(topsrcdir)/toolkit/mozapps/installer/packager.mk
 
-GENERATE_CACHE=1
-
-include $(MOZILLA_SRCDIR)/toolkit/mozapps/installer/packager.mk
-
-ifeq (Darwin, $(OS_ARCH))
+ifeq (Darwin,$(OS_TARGET))
 BINPATH = $(_BINPATH)
-DEFINES += -DAPPNAME=$(_APPNAME)
+DEFINES += -DAPPNAME='$(_APPNAME)'
 else
+# Every other platform just winds up in dist/bin
 BINPATH = bin
 endif
-DEFINES += -DBINPATH=$(BINPATH)
+DEFINES += -DBINPATH='$(BINPATH)'
+
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
+RESPATH = $(_RESPATH)
+else
+RESPATH = $(BINPATH)
+endif
+DEFINES += -DRESPATH='$(RESPATH)'
+
+LPROJ_ROOT = $(firstword $(subst -, ,$(AB_CD)))
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
+ifeq (zh-TW,$(AB_CD))
+LPROJ_ROOT := $(subst -,_,$(AB_CD))
+endif
+endif
+DEFINES += -DLPROJ_ROOT=$(LPROJ_ROOT)
+
+ifdef MOZ_SYSTEM_ICU
+DEFINES += -DMOZ_SYSTEM_ICU
+endif
+
+ifdef CLANG_CXX
+DEFINES += -DCLANG_CXX
+endif
+ifdef CLANG_CL
+DEFINES += -DCLANG_CL
+endif
+
+ifdef LLVM_SYMBOLIZER
+DEFINES += -DLLVM_SYMBOLIZER=$(notdir $(LLVM_SYMBOLIZER))
+endif
+ifdef MOZ_CLANG_RT_ASAN_LIB_PATH
+DEFINES += -DMOZ_CLANG_RT_ASAN_LIB=$(notdir $(MOZ_CLANG_RT_ASAN_LIB_PATH))
+endif
+
+ifdef TB_LIBOTR_PREBUILT
+DEFINES += -DTB_LIBOTR_PREBUILT
+endif
 
 libs::
-	$(MAKE) -C $(DEPTH)/mail/locales langpack
+	$(MAKE) -C $(DEPTH)/comm/mail/locales langpack
 
 ifeq (WINNT,$(OS_ARCH))
-PKGCOMP_FIND_OPTS = 
+PKGCOMP_FIND_OPTS =
 else
 PKGCOMP_FIND_OPTS = -L
 endif
@@ -136,19 +200,15 @@ FINDPATH=bin
 endif
 
 package-compare:: $(MOZ_PKG_MANIFEST)
-ifdef MOZ_PKG_MANIFEST_P
-	cd $(DIST); find $(PKGCOMP_FIND_OPTS) $(FINDPATH) -type f | sort > bin-list.txt
-	grep "^$(BINPATH)" $(MOZ_PKG_MANIFEST) | sed -e 's/^\///' | sort > $(DIST)/pack-list.txt
+	cd $(DIST); find $(PKGCOMP_FIND_OPTS) '$(FINDPATH)' -type f | sort > bin-list.txt
+	$(call py_action,preprocessor,$(DEFINES) $(ACDEFINES) $(MOZ_PKG_MANIFEST)) | grep '^$(BINPATH)' | sed -e 's/^\///' | sort > $(DIST)/pack-list.txt
 	-diff -u $(DIST)/pack-list.txt $(DIST)/bin-list.txt
 	rm -f $(DIST)/pack-list.txt $(DIST)/bin-list.txt
-endif
 
-installer: removed-files
-ifdef INSTALLER_DIR
-	$(MAKE) -C $(INSTALLER_DIR)
-endif
-
-APP_SOURCE_STAMP = $(firstword $(shell hg -R $(topsrcdir) parent --template="{node|short}\n" 2>/dev/null))
-APP_SOURCE_REPO = $(shell hg -R $(topsrcdir) showconfig paths.default 2>/dev/null | sed -e "s/^ssh:/http:/")
+# Overwrite the one made by Firefox with our own.
 make-sourcestamp-file::
-	@echo "$(APP_SOURCE_REPO)/rev/$(APP_SOURCE_STAMP)" >> $(MOZ_SOURCESTAMP_FILE)
+	$(PYTHON3) $(commtopsrcdir)/build/source_repos.py gen_sourcestamp > $(MOZ_SOURCESTAMP_FILE)
+
+ifdef ENABLE_WEBDRIVER
+DEFINES += -DENABLE_WEBDRIVER=1
+endif

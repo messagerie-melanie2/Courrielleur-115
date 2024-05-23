@@ -1,26 +1,26 @@
-def test(mod, path, entity = None):
-  import re
-  # ignore anything but Thunderbird
-  if mod not in ("netwerk", "dom", "toolkit", "security/manager",
-                 "mail", "chat", "editor/ui", "extensions/spellcheck",
-                 "other-licenses/branding/thunderbird"):
-    return False
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-  # Ignore Lorentz strings, at least temporarily
-  if mod == "toolkit" and path == "chrome/mozapps/plugins/plugins.dtd":
-    if entity.startswith('reloadPlugin.'): return False
-    if entity.startswith('report.'): return False
 
-  # ignore MOZ_LANGPACK_CONTRIBUTORS
-  if mod == "mail" and path == "defines.inc" and \
-     entity == "MOZ_LANGPACK_CONTRIBUTORS":
-    return False
-  # ignore dictionaries
-  if mod == "extensions/spellcheck":
-    return False
+def test(mod, path, entity=None):
+    # ignore anything but Thunderbird
+    if mod not in (
+        "netwerk",
+        "dom",
+        "toolkit",
+        "security/manager",
+        "devtools/shared",
+        "devtools/client",
+        "mail",
+        "chat",
+        "extensions/spellcheck",
+        "mail/branding/thunderbird",
+    ):
+        return "ignore"
 
-  if path == "chrome/messenger-region/region.properties":
-    return not (re.match(r"browser\.search\.order\.[1-9]", entity)) 
+    # ignore dictionaries
+    if mod == "extensions/spellcheck":
+        return "ignore"
 
-  # ignore search plugins
-  return not (re.match(r"searchplugins\/.+\.xml", path))
+    return "error"

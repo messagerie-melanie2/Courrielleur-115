@@ -1,43 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is The Browser Profile Migrator.
- *
- * The Initial Developer of the Original Code is Ben Goodger.
- * Portions created by the Initial Developer are Copyright (C) 2004
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Ben Goodger <ben@bengoodger.com>
- *  Benjamin Smedberg <bsmedberg@covad.net>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsILocalFile.h"
-#include "nsIDOMWindow.h"
+#include "nsIFile.h"
+#include "mozIDOMWindow.h"
 #include "nsIProfileMigrator.h"
 #include "nsIPrefService.h"
 #include "nsIServiceManager.h"
@@ -51,47 +18,46 @@
 #include "nsIProperties.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsProfileMigrator.h"
-#include "nsMailMigrationCID.h"
 
 #ifdef XP_WIN
-#include <windows.h>
+#  include <windows.h>
 #else
-#include <limits.h>
+#  include <limits.h>
 #endif
 
-NS_IMPL_ISUPPORTS1(nsProfileMigrator, nsIProfileMigrator)
+NS_IMPL_ISUPPORTS(nsProfileMigrator, nsIProfileMigrator)
 
-#define MIGRATION_WIZARD_FE_URL "chrome://messenger/content/migration/migration.xul"
-#define MIGRATION_WIZARD_FE_FEATURES "chrome,dialog,modal,centerscreen"
+#define MIGRATION_WIZARD_FE_URL \
+  "chrome://messenger/content/migration/migration.xhtml"_ns
+#define MIGRATION_WIZARD_FE_FEATURES "chrome,dialog,modal,centerscreen"_ns
 
 NS_IMETHODIMP
-nsProfileMigrator::Migrate(nsIProfileStartup* aStartup, const nsACString& aKey)
-{
-  nsCAutoString key;
+nsProfileMigrator::Migrate(nsIProfileStartup* aStartup, const nsACString& aKey,
+                           const nsACString& aProfileName) {
+  nsAutoCString key;
   nsCOMPtr<nsIMailProfileMigrator> mailMigrator;
   nsresult rv = GetDefaultMailMigratorKey(key, mailMigrator);
-  NS_ENSURE_SUCCESS(rv, rv); // abort migration if we failed to get a mailMigrator (if we were supposed to)
+  NS_ENSURE_SUCCESS(rv, rv);  // abort migration if we failed to get a
+                              // mailMigrator (if we were supposed to)
 
-  nsCOMPtr<nsISupportsCString> cstr (do_CreateInstance("@mozilla.org/supports-cstring;1"));
+  nsCOMPtr<nsISupportsCString> cstr(
+      do_CreateInstance("@mozilla.org/supports-cstring;1"));
   NS_ENSURE_TRUE(cstr, NS_ERROR_OUT_OF_MEMORY);
   cstr->SetData(key);
 
-  // By opening the Migration FE with a supplied mailMigrator, it will automatically
-  // migrate from it.
-  nsCOMPtr<nsIWindowWatcher> ww (do_GetService(NS_WINDOWWATCHER_CONTRACTID));
-  nsCOMPtr<nsIMutableArray> params (do_CreateInstance(NS_ARRAY_CONTRACTID));
+  // By opening the Migration FE with a supplied mailMigrator, it will
+  // automatically migrate from it.
+  nsCOMPtr<nsIWindowWatcher> ww(do_GetService(NS_WINDOWWATCHER_CONTRACTID));
+  nsCOMPtr<nsIMutableArray> params(do_CreateInstance(NS_ARRAY_CONTRACTID));
   if (!ww || !params) return NS_ERROR_FAILURE;
 
-  params->AppendElement(cstr, false);
-  params->AppendElement(mailMigrator, false);
-  params->AppendElement(aStartup, false);
+  params->AppendElement(cstr);
+  params->AppendElement(mailMigrator);
+  params->AppendElement(aStartup);
 
-  nsCOMPtr<nsIDOMWindow> migrateWizard;
-  return ww->OpenWindow(nsnull,
-                        MIGRATION_WIZARD_FE_URL,
-                        "_blank",
-                        MIGRATION_WIZARD_FE_FEATURES,
-                        params,
+  nsCOMPtr<mozIDOMWindowProxy> migrateWizard;
+  return ww->OpenWindow(nullptr, MIGRATION_WIZARD_FE_URL, "_blank"_ns,
+                        MIGRATION_WIZARD_FE_FEATURES, params,
                         getter_AddRefs(migrateWizard));
 }
 
@@ -101,67 +67,52 @@ typedef struct {
   WORD wCodePage;
 } LANGANDCODEPAGE;
 
-#define INTERNAL_NAME_THUNDERBIRD     "Thunderbird"
-#define INTERNAL_NAME_SEAMONKEY       "Mozilla"
+#  define INTERNAL_NAME_THUNDERBIRD "Thunderbird"
+#  define INTERNAL_NAME_SEAMONKEY "Mozilla"
 #endif
 
-nsresult
-nsProfileMigrator::GetDefaultMailMigratorKey(nsACString& aKey, nsCOMPtr<nsIMailProfileMigrator>& mailMigrator)
-{
-  // look up the value of profile.force.migration in case we are supposed to force migration using a particular
-  // migrator....
+nsresult nsProfileMigrator::GetDefaultMailMigratorKey(
+    nsACString& aKey, nsCOMPtr<nsIMailProfileMigrator>& mailMigrator) {
+  // look up the value of profile.force.migration in case we are supposed to
+  // force migration using a particular migrator....
   nsresult rv = NS_OK;
   nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCString forceMigrationType;
-  prefs->GetCharPref("profile.force.migration", getter_Copies(forceMigrationType));
+  prefs->GetCharPref("profile.force.migration", forceMigrationType);
 
-  // if we are being forced to migrate to a particular migration type, then create an instance of that migrator
-  // and return it.
-  NS_NAMED_LITERAL_CSTRING(migratorPrefix,
-                           NS_MAILPROFILEMIGRATOR_CONTRACTID_PREFIX);
-  nsCAutoString migratorID;
-  if (!forceMigrationType.IsEmpty())
-  {
+  // if we are being forced to migrate to a particular migration type, then
+  // create an instance of that migrator and return it.
+  nsAutoCString migratorID;
+  if (!forceMigrationType.IsEmpty()) {
     bool exists = false;
-    migratorID = migratorPrefix;
+    migratorID.AppendLiteral("@mozilla.org/messenger/server;1?type=");
     migratorID.Append(forceMigrationType);
     mailMigrator = do_CreateInstance(migratorID.get());
-    if (!mailMigrator)
-      return NS_ERROR_NOT_AVAILABLE;
+    if (!mailMigrator) return NS_ERROR_NOT_AVAILABLE;
 
     mailMigrator->GetSourceExists(&exists);
     /* trying to force migration on a source which doesn't
      * have any profiles.
      */
-    if (!exists)
-      return NS_ERROR_NOT_AVAILABLE;
+    if (!exists) return NS_ERROR_NOT_AVAILABLE;
     aKey = forceMigrationType;
     return NS_OK;
   }
 
-  #define MAX_SOURCE_LENGTH 10
-  const char sources[][MAX_SOURCE_LENGTH] = {
-    "seamonkey",
-    "oexpress",
-    "outlook",
-    "eudora",
-    ""
-  };
-  for (PRUint32 i = 0; sources[i][0]; ++i)
-  {
-    migratorID = migratorPrefix;
+#define MAX_SOURCE_LENGTH 10
+  const char sources[][MAX_SOURCE_LENGTH] = {"seamonkey", "outlook", ""};
+  for (uint32_t i = 0; sources[i][0]; ++i) {
+    migratorID.AssignLiteral("@mozilla.org/messenger/server;1?type=");
     migratorID.Append(sources[i]);
     mailMigrator = do_CreateInstance(migratorID.get());
-    if (!mailMigrator)
-      continue;
+    if (!mailMigrator) continue;
 
     bool exists = false;
     mailMigrator->GetSourceExists(&exists);
-    if (exists)
-    {
-      mailMigrator = nsnull;
+    if (exists) {
+      mailMigrator = nullptr;
       return NS_OK;
     }
   }

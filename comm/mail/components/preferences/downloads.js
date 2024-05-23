@@ -1,159 +1,132 @@
-# -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is the Firefox Preferences System.
-#
-# The Initial Developer of the Original Code is
-# Ben Goodger.
-# Portions created by the Initial Developer are Copyright (C) 2005
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#   Ben Goodger <ben@mozilla.org>
-#   Dan Mosedale <dmose@mozilla.org>
-#   Magnus Melin <mkmelin+mozilla@iki.fi>
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or
-# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* import-globals-from preferences.js */
+
+var { Downloads } = ChromeUtils.importESModule(
+  "resource://gre/modules/Downloads.sys.mjs"
+);
+var { FileUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/FileUtils.sys.mjs"
+);
+
+Preferences.addAll([
+  { id: "browser.download.useDownloadDir", type: "bool" },
+  { id: "browser.download.folderList", type: "int" },
+  { id: "browser.download.downloadDir", type: "file" },
+  { id: "browser.download.dir", type: "file" },
+  { id: "pref.downloads.disable_button.edit_actions", type: "bool" },
+]);
 
 var gDownloadDirSection = {
-  chooseFolder: function ()
-  {
-    const nsIFilePicker = Components.interfaces.nsIFilePicker;
-    var fp = Components.classes["@mozilla.org/filepicker;1"]
-                       .createInstance(nsIFilePicker);
+  async chooseFolder() {
+    var fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
     var bundlePreferences = document.getElementById("bundlePreferences");
     var title = bundlePreferences.getString("chooseAttachmentsFolderTitle");
-    fp.init(window, title, nsIFilePicker.modeGetFolder);
+    fp.init(window, title, Ci.nsIFilePicker.modeGetFolder);
 
-    const nsILocalFile = Components.interfaces.nsILocalFile;
-    var customDirPref = document.getElementById("browser.download.dir");
-    if (customDirPref.value)
+    var customDirPref = Preferences.get("browser.download.dir");
+    if (customDirPref.value) {
       fp.displayDirectory = customDirPref.value;
-    fp.appendFilters(nsIFilePicker.filterAll);
-    if (fp.show() == nsIFilePicker.returnOK) {
-      var file = fp.file.QueryInterface(nsILocalFile);
-      var currentDirPref = document.getElementById("browser.download.downloadDir");
-      customDirPref.value = currentDirPref.value = file;
-      var folderListPref = document.getElementById("browser.download.folderList");
-      folderListPref.value = this._fileToIndex(file);
     }
+    fp.appendFilters(Ci.nsIFilePicker.filterAll);
+
+    let rv = await new Promise(resolve => fp.open(resolve));
+    if (rv != Ci.nsIFilePicker.returnOK || !fp.file) {
+      return;
+    }
+
+    let file = fp.file.QueryInterface(Ci.nsIFile);
+    let currentDirPref = Preferences.get("browser.download.downloadDir");
+    customDirPref.value = currentDirPref.value = file;
+    let folderListPref = Preferences.get("browser.download.folderList");
+    folderListPref.value = await this._fileToIndex(file);
   },
 
-  onReadUseDownloadDir: function ()
-  {
+  onReadUseDownloadDir() {
+    this.readDownloadDirPref();
     var downloadFolder = document.getElementById("downloadFolder");
     var chooseFolder = document.getElementById("chooseFolder");
-    var preference = document.getElementById("browser.download.useDownloadDir");
-    downloadFolder.disabled = !preference.value;
-    chooseFolder.disabled = !preference.value;
+    var preference = Preferences.get("browser.download.useDownloadDir");
+    var dirPreference = Preferences.get("browser.download.dir");
+    downloadFolder.disabled = !preference.value || dirPreference.locked;
+    chooseFolder.disabled = !preference.value || dirPreference.locked;
     return undefined;
   },
 
-  _fileToIndex: function (aFile)
-  {
-    if (!aFile || aFile.equals(this._getDownloadsFolder("Desktop")))
+  async _fileToIndex(aFile) {
+    if (!aFile || aFile.equals(await this._getDownloadsFolder("Desktop"))) {
       return 0;
-    else if (aFile.equals(this._getDownloadsFolder("Downloads")))
+    } else if (aFile.equals(await this._getDownloadsFolder("Downloads"))) {
       return 1;
+    }
     return 2;
   },
 
-  _indexToFile: function (aIndex)
-  {
+  async _indexToFile(aIndex) {
     switch (aIndex) {
-    case 0: 
-      return this._getDownloadsFolder("Desktop");
-    case 1:
-      return this._getDownloadsFolder("Downloads");
+      case 0:
+        return this._getDownloadsFolder("Desktop");
+      case 1:
+        return this._getDownloadsFolder("Downloads");
     }
-    var customDirPref = document.getElementById("browser.download.dir");
+    var customDirPref = Preferences.get("browser.download.dir");
     return customDirPref.value;
   },
 
-  _getSpecialFolderKey: function (aFolderType)
-  {
-    if (aFolderType == "Desktop")
-      return "Desk";
-
-    if (aFolderType != "Downloads")
-      throw "ASSERTION FAILED: folder type should be 'Desktop' or 'Downloads'";
-
-#ifdef XP_WIN
-    return "Pers";
-#else
-#ifdef XP_MACOSX
-    return "UsrDocs";
-#else
-    return "Home";
-#endif
-#endif
+  async _getDownloadsFolder(aFolder) {
+    switch (aFolder) {
+      case "Desktop":
+        return Services.dirsvc.get("Desk", Ci.nsIFile);
+      case "Downloads":
+        let downloadsDir = await Downloads.getSystemDownloadsDirectory();
+        return new FileUtils.File(downloadsDir);
+    }
+    throw new Error(
+      "ASSERTION FAILED: folder type should be 'Desktop' or 'Downloads'"
+    );
   },
 
-  _getDownloadsFolder: function (aFolder)
-  {
-    var fileLocator = Components.classes["@mozilla.org/file/directory_service;1"]
-                                .getService(Components.interfaces.nsIProperties);
-    var dir = fileLocator.get(this._getSpecialFolderKey(aFolder),
-                              Components.interfaces.nsILocalFile);
-    if (aFolder != "Desktop")
-      dir.append("My Downloads");
-
-    return dir;
-  },
-
-  readDownloadDirPref: function ()
-  {
-    var folderListPref = document.getElementById("browser.download.folderList");
+  async readDownloadDirPref() {
+    var folderListPref = Preferences.get("browser.download.folderList");
     var bundlePreferences = document.getElementById("bundlePreferences");
     var downloadFolder = document.getElementById("downloadFolder");
 
-    var customDirPref = document.getElementById("browser.download.dir");
-    var customIndex = customDirPref.value ? this._fileToIndex(customDirPref.value) : 0;
-    if (folderListPref.value == 0 || customIndex == 0)
-      downloadFolder.label = bundlePreferences.getString("desktopFolderName");
-    else if (folderListPref.value == 1 || customIndex == 1) 
-      downloadFolder.label = bundlePreferences.getString("myDownloadsFolderName");
-    else
-      downloadFolder.label = customDirPref.value ? customDirPref.value.path : "";
+    var customDirPref = Preferences.get("browser.download.dir");
+    var customIndex = customDirPref.value
+      ? await this._fileToIndex(customDirPref.value)
+      : 0;
+    if (customIndex == 0) {
+      downloadFolder.value = bundlePreferences.getString("desktopFolderName");
+    } else if (customIndex == 1) {
+      downloadFolder.value = bundlePreferences.getString(
+        "myDownloadsFolderName"
+      );
+    } else {
+      downloadFolder.value = customDirPref.value
+        ? customDirPref.value.path
+        : "";
+    }
 
-    var ios = Components.classes["@mozilla.org/network/io-service;1"]
-                        .getService(Components.interfaces.nsIIOService);
-    var fph = ios.getProtocolHandler("file")
-                 .QueryInterface(Components.interfaces.nsIFileProtocolHandler);
-    var currentDirPref = document.getElementById("browser.download.downloadDir");
-    var downloadDir = currentDirPref.value || this._indexToFile(folderListPref.value);
-    var urlspec = fph.getURLSpecFromFile(downloadDir);
-    downloadFolder.image = "moz-icon://" + urlspec + "?size=16";
+    var currentDirPref = Preferences.get("browser.download.downloadDir");
+    var downloadDir =
+      currentDirPref.value || (await this._indexToFile(folderListPref.value));
+    if (downloadDir) {
+      let urlSpec = Services.io
+        .getProtocolHandler("file")
+        .QueryInterface(Ci.nsIFileProtocolHandler)
+        .getURLSpecFromDir(downloadDir);
+
+      downloadFolder.style.backgroundImage =
+        "url(moz-icon://" + urlSpec + "?size=16)";
+    }
 
     return undefined;
   },
-
-  writeFolderList: function ()
-  {
-    var currentDirPref = document.getElementById("browser.download.downloadDir");
-    return this._fileToIndex(currentDirPref.value);
-  }
 };
+
+Preferences.get("browser.download.dir").on(
+  "change",
+  gDownloadDirSection.readDownloadDirPref.bind(gDownloadDirSection)
+);

@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 var pv = function () {
 /**
  * @namespace The Protovis namespace, <tt>pv</tt>. All public methods and fields
@@ -34,54 +38,6 @@ pv.extend = function(f) {
   return new g();
 };
 
-try {
-  eval("pv.parse = function(x) x;"); // native support
-} catch (e) {
-
-/**
- * Parses a Protovis specification, which may use JavaScript 1.8 function
- * expresses, replacing those function expressions with proper functions such
- * that the code can be run by a JavaScript 1.6 interpreter. This hack only
- * supports function expressions (using clumsy regular expressions, no less),
- * and not other JavaScript 1.8 features such as let expressions.
- *
- * @param {string} s a Protovis specification (i.e., a string of JavaScript 1.8
- * source code).
- * @returns {string} a conformant JavaScript 1.6 source code.
- */
-  pv.parse = function(js) { // hacky regex support
-    var re = new RegExp("function(\\s+\\w+)?\\([^)]*\\)\\s*", "mg"), m, i = 0;
-    var s = "";
-    while (m = re.exec(js)) {
-      var j = m.index + m[0].length;
-      if (js[j--] != '{') {
-        s += js.substring(i, j) + "{return ";
-        i = j;
-        for (var p = 0; p >= 0 && j < js.length; j++) {
-          switch (js[j]) {
-            case '"': case '\'': {
-              var c = js[j];
-              while (++j < js.length && (js[j] != c)) {
-                if (js[j] == '\\') j++;
-              }
-              break;
-            }
-            case '[': case '(': p++; break;
-            case ']': case ')': p--; break;
-            case ';':
-            case ',': if (p == 0) p--; break;
-          }
-        }
-        s += pv.parse(js.substring(i, --j)) + ";}";
-        i = j;
-      }
-      re.lastIndex = j;
-    }
-    s += js.substring(i);
-    return s;
-  };
-}
-
 /**
  * Returns the passed-in argument, <tt>x</tt>; the identity function. This method
  * is provided for convenience since it is used as the default behavior for a
@@ -95,7 +51,7 @@ pv.identity = function(x) { return x; };
 /**
  * Returns an array of numbers, starting at <tt>start</tt>, incrementing by
  * <tt>step</tt>, until <tt>stop</tt> is reached. The stop value is exclusive. If
- * only a single argument is specified, this value is interpeted as the
+ * only a single argument is specified, this value is interpreted as the
  * <i>stop</i> value, with the <i>start</i> value as zero. If only two arguments
  * are specified, the step value is implied to be one.
  *
@@ -620,11 +576,11 @@ pv.color = function(format) {
       }
       case "rgba":
       case "rgb": {
-        function parse(c) { // either integer or percentage
-          var f = parseFloat(c);
+        let parse = function(c) { // either integer or percentage
+          let f = parseFloat(c);
           return (c[c.length - 1] == '%') ? Math.round(f * 2.55) : f;
-        }
-        var r = parse(m2[0]), g = parse(m2[1]), b = parse(m2[2]);
+        };
+        let r = parse(m2[0]), g = parse(m2[1]), b = parse(m2[2]);
         return new pv.Color.Rgb(r, g, b, a);
       }
     }
@@ -994,9 +950,9 @@ pv.Ramp = function(start, end) {
     return value(f.apply(this, this.root.scene.data));
   }
 
-  /** @ignore Interpolates between start and end at value t in [0,1]. */
-  function value(t) {
-    var t = Math.max(0, Math.min(1, t));
+  /** @ignore Interpolates between start and end at value aT in [0,1]. */
+  function value(aT) {
+    var t = Math.max(0, Math.min(1, aT));
     var a = s.a * (1 - t) + e.a * t;
     if (a < 1e-5) a = 0; // avoid scientific notation
     return (s.a == 0) ? new pv.Color.Rgb(e.r, e.g, e.b, a)
@@ -1172,7 +1128,7 @@ pv.Mark.prototype.defineProperty = function(name) {
 /**
  * The constructor; the mark type. This mark type may define default property
  * functions (see {@link #defaults}) that are used if the property is not
- * overriden by the mark or any of its prototypes.
+ * overridden by the mark or any of its prototypes.
  *
  * @type function
  */
@@ -1571,7 +1527,7 @@ pv.Mark.prototype.render = function() {
  * special. The <tt>data</tt> property is evaluated first; unlike the other
  * properties, the data stack is from the parent panel, rather than the current
  * mark, since the data is not defined until the data property is evaluated.
- * The <tt>visisble</tt> property is subsequently evaluated for each instance;
+ * The <tt>visible</tt> property is subsequently evaluated for each instance;
  * only if true will the {@link #buildInstance} method be called, evaluating
  * other properties and recursively building the scene graph.
  *
@@ -1837,7 +1793,7 @@ pv.Mark.prototype.updateInstance = function(s) {
     return function(e) {
         /* TODO set full scene stack. */
         var data = [s.data], p = s;
-        while (p = p.parent) {
+        while ((p = p.parent)) {
           data.push(p.data);
         }
         that.index = s.index;
@@ -1851,6 +1807,8 @@ pv.Mark.prototype.updateInstance = function(s) {
   };
 
   /* TODO inherit event handlers. */
+  if (!this.events)
+    return;
   for (var type in this.events) {
     v["on" + type] = dispatch(type);
   }
@@ -2174,7 +2132,7 @@ pv.Area.prototype.update = function() {
   var s = this.scene[0], v = s.svg;
   if (s.visible) {
 
-    /* Create the <svg:polygon> element, if necesary. */
+    /* Create the <svg:polygon> element, if necessary. */
     if (!v) {
       v = s.svg = document.createElementNS(pv.ns.svg, "polygon");
       s.parent.svg.appendChild(v);
@@ -2986,7 +2944,7 @@ pv.Image.prototype.updateInstance = function(s) {
       f = v.$stroke = document.createElementNS(pv.ns.svg, "rect");
       f.setAttribute("fill", "none");
       f.setAttribute("pointer-events", "all");
-      v.parentNode.insertBefore(f, v.nextSibling);
+      v.parentNode.insertBefore(f, v.nextElementSibling);
     }
     position(f);
     var stroke = pv.color(s.strokeStyle);
@@ -3516,8 +3474,8 @@ pv.Panel.prototype.createCanvas = function(w, h) {
    */
   function lastElement() {
     var node = document.body;
-    while (node.lastChild && node.lastChild.tagName) {
-      node = node.lastChild;
+    while (node.lastElementChild && node.lastElementChild.tagName) {
+      node = node.lastElementChild;
     }
     return (node == document.body) ? node : node.parentNode;
   }
@@ -3590,7 +3548,7 @@ pv.Panel.prototype.buildInstance = function(s) {
  * is populated above in {@link #buildInstance}.
  *
  * </ul>The current implementation creates the SVG element, if necessary, during
- * the build phase; in the future, it may be preferrable to move this to the
+ * the build phase; in the future, it may be preferable to move this to the
  * update phase, although then the canvas property would be undefined. In
  * addition, DOM inspection is necessary to define the implied width and height
  * properties that may be inferred from the DOM.
@@ -3605,11 +3563,12 @@ pv.Panel.prototype.buildImplied = function(s) {
       var d = (typeof c == "string") ? document.getElementById(c) : c;
 
       /* Clear the container if it's not already associated with this panel. */
-      if (d.$panel != this) {
+      if (!d.$panel || d.$panel != this) {
         d.$panel = this;
         delete d.$canvas;
-        while (d.lastChild)
-          d.removeChild(d.lastChild);
+        while (d.lastChild) {
+          d.lastChild.remove();
+        }
       }
 
       /* Construct the canvas if not already present. */
@@ -3619,9 +3578,9 @@ pv.Panel.prototype.buildImplied = function(s) {
       }
 
       /** Returns the computed style for the given element and property. */
-      function css(e, p) {
+      let css = function(e, p) {
         return parseFloat(self.getComputedStyle(e, null).getPropertyValue(p));
-      }
+      };
 
       /* If width and height weren't specified, inspect the container. */
       var w, h;
@@ -3728,7 +3687,7 @@ pv.Panel.prototype.updateInstance = function(s) {
   if (s.fillStyle || s.strokeStyle) {
     if (!r) {
       r = v.$rect = document.createElementNS(pv.ns.svg, "rect");
-      v.insertBefore(r, v.firstChild);
+      v.insertBefore(r, v.firstElementChild);
     }
 
     /* If width and height are exactly zero, the rect is not stroked! */

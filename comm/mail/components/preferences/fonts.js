@@ -1,220 +1,196 @@
 /* -*- Mode: JavaScript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is the Thunderbird Preferences System.
- *
- * The Initial Developer of the Original Code is
- * Ben Goodger.
- * Portions created by the Initial Developer are Copyright (C) 2005
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Scott MacGregor <mscott@mozilla.org>
- *   Siddharth Agarwal <sid.bugzilla@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const kDefaultFontType          = "font.default.%LANG%";
-const kFontNameFmtSerif         = "font.name.serif.%LANG%";
-const kFontNameFmtSansSerif     = "font.name.sans-serif.%LANG%";
-const kFontNameFmtMonospace     = "font.name.monospace.%LANG%";
-const kFontNameListFmtSerif     = "font.name-list.serif.%LANG%";
-const kFontNameListFmtSansSerif = "font.name-list.sans-serif.%LANG%";
-const kFontNameListFmtMonospace = "font.name-list.monospace.%LANG%";
-const kFontSizeFmtVariable      = "font.size.variable.%LANG%";
-const kFontSizeFmtFixed         = "font.size.fixed.%LANG%";
-const kFontMinSizeFmt           = "font.minimum-size.%LANG%";
+// toolkit/content/preferencesBindings.js
+/* globals Preferences */
+// toolkit/mozapps/preferences/fontbuilder.js
+/* globals FontBuilder */
+
+var kDefaultFontType = "font.default.%LANG%";
+var kFontNameFmtSerif = "font.name.serif.%LANG%";
+var kFontNameFmtSansSerif = "font.name.sans-serif.%LANG%";
+var kFontNameFmtMonospace = "font.name.monospace.%LANG%";
+var kFontNameListFmtSerif = "font.name-list.serif.%LANG%";
+var kFontNameListFmtSansSerif = "font.name-list.sans-serif.%LANG%";
+var kFontNameListFmtMonospace = "font.name-list.monospace.%LANG%";
+var kFontSizeFmtVariable = "font.size.variable.%LANG%";
+var kFontSizeFmtFixed = "font.size.monospace.%LANG%";
+var kFontMinSizeFmt = "font.minimum-size.%LANG%";
+
+Preferences.addAll([
+  { id: "font.language.group", type: "wstring" },
+  { id: "browser.display.use_document_fonts", type: "int" },
+  { id: "mail.fixed_width_messages", type: "bool" },
+]);
 
 var gFontsDialog = {
-  _init: function()
-  {
-    // build the charset menu list. We do this by hand instead of using the xul template
-    // builder because of Bug #285076,
-    this.createCharsetMenus(document.getElementById("viewDefaultCharset-menupopup"), "NC:DecodersRoot",
-                            document.getElementById('mailnews.view_default_charset').value);
+  _selectLanguageGroupPromise: Promise.resolve(),
+
+  init() {
+    Preferences.addSyncFromPrefListener(
+      document.getElementById("selectLangs"),
+      () => gFontsDialog.readFontLanguageGroup()
+    );
+    Preferences.addSyncFromPrefListener(
+      document.getElementById("serif"),
+      element => FontBuilder.readFontSelection(element)
+    );
+    Preferences.addSyncFromPrefListener(
+      document.getElementById("sans-serif"),
+      element => FontBuilder.readFontSelection(element)
+    );
+    Preferences.addSyncFromPrefListener(
+      document.getElementById("monospace"),
+      element => FontBuilder.readFontSelection(element)
+    );
+
+    let element = document.getElementById("useDocumentFonts");
+    Preferences.addSyncFromPrefListener(element, () =>
+      gFontsDialog.readUseDocumentFonts()
+    );
+    Preferences.addSyncToPrefListener(element, () =>
+      gFontsDialog.writeUseDocumentFonts()
+    );
+
+    element = document.getElementById("mailFixedWidthMessages");
+    Preferences.addSyncFromPrefListener(element, () =>
+      gFontsDialog.readFixedWidthForPlainText()
+    );
+    Preferences.addSyncToPrefListener(element, () =>
+      gFontsDialog.writeFixedWidthForPlainText()
+    );
   },
 
-  _selectLanguageGroup: function (aLanguageGroup)
-  {
-    var prefs = [{ format: kDefaultFontType,          type: "string",   element: "defaultFontType", fonttype: null},
-                 { format: kFontNameFmtSerif,         type: "fontname", element: "serif",      fonttype: "serif"       },
-                 { format: kFontNameFmtSansSerif,     type: "fontname", element: "sans-serif", fonttype: "sans-serif"  },
-                 { format: kFontNameFmtMonospace,     type: "fontname", element: "monospace",  fonttype: "monospace"   },
-                 { format: kFontNameListFmtSerif,     type: "unichar",  element: null,         fonttype: "serif"       },
-                 { format: kFontNameListFmtSansSerif, type: "unichar",  element: null,         fonttype: "sans-serif"  },
-                 { format: kFontNameListFmtMonospace, type: "unichar",  element: null,         fonttype: "monospace"   },
-                 { format: kFontSizeFmtVariable,      type: "int",      element: "sizeVar",    fonttype: null          },
-                 { format: kFontSizeFmtFixed,         type: "int",      element: "sizeMono",   fonttype: null          },
-                 { format: kFontMinSizeFmt,           type: "int",      element: "minSize",    fonttype: null          }];
-    var preferences = document.getElementById("fontPreferences");
-    for (var i = 0; i < prefs.length; ++i) {
-      var preference = document.getElementById(prefs[i].format.replace(/%LANG%/, aLanguageGroup));
-      if (!preference) {
-        preference = document.createElement("preference");
+  _selectLanguageGroup(aLanguageGroup) {
+    this._selectLanguageGroupPromise = (async () => {
+      // Avoid overlapping language group selections by awaiting the resolution
+      // of the previous one.  We do this because this function is re-entrant,
+      // as inserting <preference> elements into the DOM sometimes triggers a call
+      // back into this function.  And since this function is also asynchronous,
+      // that call can enter this function before the previous run has completed,
+      // which would corrupt the font menulists.  Awaiting the previous call's
+      // resolution avoids that fate.
+      await this._selectLanguageGroupPromise;
+
+      var prefs = [
+        {
+          format: kDefaultFontType,
+          type: "string",
+          element: "defaultFontType",
+          fonttype: null,
+        },
+        {
+          format: kFontNameFmtSerif,
+          type: "fontname",
+          element: "serif",
+          fonttype: "serif",
+        },
+        {
+          format: kFontNameFmtSansSerif,
+          type: "fontname",
+          element: "sans-serif",
+          fonttype: "sans-serif",
+        },
+        {
+          format: kFontNameFmtMonospace,
+          type: "fontname",
+          element: "monospace",
+          fonttype: "monospace",
+        },
+        {
+          format: kFontNameListFmtSerif,
+          type: "unichar",
+          element: null,
+          fonttype: "serif",
+        },
+        {
+          format: kFontNameListFmtSansSerif,
+          type: "unichar",
+          element: null,
+          fonttype: "sans-serif",
+        },
+        {
+          format: kFontNameListFmtMonospace,
+          type: "unichar",
+          element: null,
+          fonttype: "monospace",
+        },
+        {
+          format: kFontSizeFmtVariable,
+          type: "int",
+          element: "sizeVar",
+          fonttype: null,
+        },
+        {
+          format: kFontSizeFmtFixed,
+          type: "int",
+          element: "sizeMono",
+          fonttype: null,
+        },
+        {
+          format: kFontMinSizeFmt,
+          type: "int",
+          element: "minSize",
+          fonttype: null,
+        },
+      ];
+      for (var i = 0; i < prefs.length; ++i) {
         var name = prefs[i].format.replace(/%LANG%/, aLanguageGroup);
-        preference.id = name;
-        preference.setAttribute("name", name);
-        preference.setAttribute("type", prefs[i].type);
-        preferences.appendChild(preference);
+        var preference = Preferences.get(name);
+        if (!preference) {
+          preference = Preferences.add({ id: name, type: prefs[i].type });
+        }
+
+        if (!prefs[i].element) {
+          continue;
+        }
+
+        var element = document.getElementById(prefs[i].element);
+        if (element) {
+          element.setAttribute("preference", preference.id);
+
+          if (prefs[i].fonttype) {
+            await FontBuilder.buildFontList(
+              aLanguageGroup,
+              prefs[i].fonttype,
+              element
+            );
+          }
+          preference.setElementValue(element);
+        }
       }
-
-      if (!prefs[i].element)
-        continue;
-
-      var element = document.getElementById(prefs[i].element);
-      if (element) {
-        element.setAttribute("preference", preference.id);
-
-        if (prefs[i].fonttype)
-          FontBuilder.buildFontList(aLanguageGroup, prefs[i].fonttype, element);
-
-        preference.setElementValue(element);
-      }
-    }
+    })().catch(console.error);
   },
 
-  readFontLanguageGroup: function ()
-  {
-    var languagePref = document.getElementById("font.language.group");
+  readFontLanguageGroup() {
+    var languagePref = Preferences.get("font.language.group");
     this._selectLanguageGroup(languagePref.value);
     return undefined;
   },
 
-  readFontSelection: function (aElement)
-  {
-    // Determine the appropriate value to select, for the following cases:
-    // - there is no setting
-    // - the font selected by the user is no longer present (e.g. deleted from
-    //   fonts folder)
-    var preference = document.getElementById(aElement.getAttribute("preference"));
-    if (preference.value) {
-      var fontItems = aElement.getElementsByAttribute("value", preference.value);
-
-      // There is a setting that actually is in the list. Respect it.
-      if (fontItems.length > 0)
-        return undefined;
-    }
-
-    var defaultValue = aElement.firstChild.firstChild.getAttribute("value");
-    var languagePref = document.getElementById("font.language.group");
-    preference = document.getElementById("font.name-list." + aElement.id + "." + languagePref.value);
-    if (!preference)
-      return defaultValue;
-
-    var fontNames = preference.value.split(",");
-
-    for (var i = 0; i < fontNames.length; ++i) {
-      var fontName = fontNames[i].trim();
-      fontItems = aElement.getElementsByAttribute("value", fontName);
-      if (fontItems.length)
-        break;
-    }
-    if (fontItems.length)
-      return fontItems[0].getAttribute("value");
-    return defaultValue;
-  },
-
-  readUseDocumentFonts: function ()
-  {
-    var preference = document.getElementById("browser.display.use_document_fonts");
+  readUseDocumentFonts() {
+    var preference = Preferences.get("browser.display.use_document_fonts");
     return preference.value == 1;
   },
 
-  writeUseDocumentFonts: function ()
-  {
+  writeUseDocumentFonts() {
     var useDocumentFonts = document.getElementById("useDocumentFonts");
-    return useDocumentFonts.checked;
+    return useDocumentFonts.checked ? 1 : 0;
   },
 
-  readFixedWidthForPlainText: function ()
-  {
-    var preference = document.getElementById("mail.fixed_width_messages");
+  readFixedWidthForPlainText() {
+    var preference = Preferences.get("mail.fixed_width_messages");
     return preference.value == 1;
   },
 
-  writeFixedWidthForPlainText: function ()
-  {
-    var mailFixedWidthMessages = document.getElementById("mailFixedWidthMessages");
+  writeFixedWidthForPlainText() {
+    var mailFixedWidthMessages = document.getElementById(
+      "mailFixedWidthMessages"
+    );
     return mailFixedWidthMessages.checked;
   },
-
-  addMenuItem: function(aMenuPopup, aLabel, aValue)
-  {
-    var menuItem = document.createElement('menuitem');
-    menuItem.setAttribute('label', aLabel);
-    menuItem.setAttribute('value', aValue);
-    aMenuPopup.appendChild(menuItem);
-  },
-
-  readRDFString: function(aDS, aRes, aProp)
-  {
-    var n = aDS.GetTarget(aRes, aProp, true);
-    return (n) ? n.QueryInterface(Components.interfaces.nsIRDFLiteral).Value : "";
-  },
-
-  createCharsetMenus: function(aMenuPopup, aRoot, aPreferenceValue)
-  {
-    var rdfService = Components.classes["@mozilla.org/rdf/rdf-service;1"]
-                     .getService(Components.interfaces.nsIRDFService);
-    var kNC_Root = rdfService.GetResource(aRoot);
-    var kNC_Name = rdfService.GetResource("http://home.netscape.com/NC-rdf#Name");
-
-    var rdfDataSource = rdfService.GetDataSource("rdf:charset-menu");
-    var rdfContainer =
-      Components.classes["@mozilla.org/rdf/container;1"]
-                .createInstance(Components.interfaces.nsIRDFContainer);
-    rdfContainer.Init(rdfDataSource, kNC_Root);
-
-    var charset;
-    var availableCharsets = rdfContainer.GetElements();
-
-    for (var i = 0; i < rdfContainer.GetCount(); i++)
-    {
-      charset = availableCharsets.getNext().QueryInterface(Components.interfaces.nsIRDFResource);
-
-      this.addMenuItem(aMenuPopup, this.readRDFString(rdfDataSource, charset, kNC_Name), charset.Value);
-      if (charset.Value == aPreferenceValue)
-        aMenuPopup.parentNode.value = charset.Value;
-    }
-  },
-
-  mCharsetMenuInitialized: false,
-  readDefaultCharset: function()
-  {
-    if (!this.mCharsetMenuInitialized)
-    {
-      Components.classes["@mozilla.org/observer-service;1"]
-                .getService(Components.interfaces.nsIObserverService)
-                .notifyObservers(null, "charsetmenu-selected", "mailedit");
-      // build the charset menu list. We do this by hand instead of using the xul template
-      // builder because of Bug #285076,
-      this.createCharsetMenus(document.getElementById("sendDefaultCharset-menupopup"), "NC:MaileditCharsetMenuRoot",
-                              document.getElementById('mailnews.send_default_charset').value);
-      this.mCharsetMenuInitialized = true;
-    }
-    return undefined;
-  },
 };
+
+window.addEventListener("load", () => gFontsDialog.init());

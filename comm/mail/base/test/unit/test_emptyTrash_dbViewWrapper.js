@@ -1,49 +1,43 @@
-load("../../../../mailnews/resources/logHelper.js");
-load("../../../../mailnews/resources/asyncTestUtils.js");
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-load("../../../../mailnews/resources/messageGenerator.js");
-load("../../../../mailnews/resources/messageModifier.js");
-load("../../../../mailnews/resources/messageInjection.js");
-
+/* import-globals-from resources/viewWrapperTestUtils.js */
 load("resources/viewWrapperTestUtils.js");
-initViewWrapperTestUtils({mode: "imap", offline: false});
+initViewWrapperTestUtils({ mode: "imap", offline: false });
 
-function test_real_folder_load_and_move_to_trash() {
+add_task(async function test_real_folder_load_and_move_to_trash() {
   let viewWrapper = make_view_wrapper();
-  let [msgFolder, msgSet] = make_folder_with_sets([{count: 1}]);
+  let [[msgFolder], msgSet] = await messageInjection.makeFoldersWithSets(1, [
+    { count: 1 },
+  ]);
 
-  yield wait_for_message_injection();
-  yield async_view_open(viewWrapper, get_real_injection_folder(msgFolder));
+  await view_open(
+    viewWrapper,
+    messageInjection.getRealInjectionFolder(msgFolder)
+  );
   verify_messages_in_view(msgSet, viewWrapper);
 
-  yield async_trash_messages(msgSet);
+  await messageInjection.trashMessages(msgSet);
   verify_empty_view(viewWrapper);
-}
+});
 
-function test_empty_trash() {
+add_task(async function test_empty_trash() {
   let viewWrapper = make_view_wrapper();
-  let trashHandle = get_trash_folder();
+  let trashHandle = await messageInjection.getTrashFolder();
+  let trashFolder = messageInjection.getRealInjectionFolder(trashHandle);
 
-  yield wait_for_async_promises();
-  let trashFolder = get_real_injection_folder(trashHandle);
+  await view_open(viewWrapper, trashFolder);
 
-  yield async_view_open(viewWrapper, trashFolder);
-
-  yield async_empty_trash();
+  await messageInjection.emptyTrash();
   verify_empty_view(viewWrapper);
 
-  do_check_neq(null, viewWrapper.displayedFolder);
+  Assert.ok(viewWrapper.displayedFolder !== null);
 
-  let [msgSet] = make_new_sets_in_folders([trashHandle], [{count: 1}]);
-  yield wait_for_message_injection();
+  let [msgSet] = await messageInjection.makeNewSetsInFolders(
+    [trashHandle],
+    [{ count: 1 }]
+  );
+
   verify_messages_in_view(msgSet, viewWrapper);
-}
-
-var tests = [
-  test_real_folder_load_and_move_to_trash,
-  test_empty_trash
-];
-
-function run_test() {
-  async_run_tests(tests);
-}
+});

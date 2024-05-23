@@ -1,77 +1,93 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is the Instantbird messenging client, released
- * 2007.
- *
- * The Initial Developer of the Original Code is
- * Florian QUEZE <florian@instantbird.org>.
- * Portions created by the Initial Developer are Copyright (C) 2007
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Benedikt P.
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
-Cu.import("resource:///modules/imServices.jsm");
+// chat/content/imAccountOptionsHelper.js
+/* globals accountOptionsHelper */
 
-const PREF_EXTENSIONS_GETMOREPROTOCOLSURL = "extensions.getMoreProtocolsURL";
+var { IMServices } = ChromeUtils.importESModule(
+  "resource:///modules/IMServices.sys.mjs"
+);
+var { MailServices } = ChromeUtils.import(
+  "resource:///modules/MailServices.jsm"
+);
+var { ChatIcons } = ChromeUtils.importESModule(
+  "resource:///modules/chatIcons.sys.mjs"
+);
+
+var PREF_EXTENSIONS_GETMOREPROTOCOLSURL = "extensions.getMoreProtocolsURL";
 
 var accountWizard = {
-  onload: function aw_onload() {
+  onload() {
+    document
+      .querySelector("wizard")
+      .addEventListener("wizardfinish", this.createAccount.bind(this));
+    let accountProtocolPage = document.getElementById("accountprotocol");
+    accountProtocolPage.addEventListener(
+      "pageadvanced",
+      this.selectProtocol.bind(this)
+    );
+    let accountUsernamePage = document.getElementById("accountusername");
+    accountUsernamePage.addEventListener(
+      "pageshow",
+      this.showUsernamePage.bind(this)
+    );
+    accountUsernamePage.addEventListener(
+      "pagehide",
+      this.hideUsernamePage.bind(this)
+    );
+    let accountAdvancedPage = document.getElementById("accountadvanced");
+    accountAdvancedPage.addEventListener(
+      "pageshow",
+      this.showAdvanced.bind(this)
+    );
+    let accountSummaryPage = document.getElementById("accountsummary");
+    accountSummaryPage.addEventListener(
+      "pageshow",
+      this.showSummary.bind(this)
+    );
+
     // Ensure the im core is initialized before we get a list of protocols.
-    Services.core.init();
+    IMServices.core.init();
 
     accountWizard.setGetMoreProtocols();
 
     var protoList = document.getElementById("protolist");
-    var protos = [];
-    for (let proto in this.getProtocols())
-      protos.push(proto);
-    protos.sort(function(a, b) a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-    protos.forEach(function(proto) {
-      var id = proto.id;
-      var item = protoList.appendItem(proto.name, id, id);
-      item.setAttribute("image", proto.iconBaseURI + "icon.png");
-      item.setAttribute("class", "listitem-iconic");
+    var protos = IMServices.core.getProtocols();
+    protos.sort((a, b) => {
+      if (a.name < b.name) {
+        return -1;
+      }
+      return a.name > b.name ? 1 : 0;
+    });
+    protos.forEach(function (proto) {
+      let image = document.createElement("img");
+      image.setAttribute("src", ChatIcons.getProtocolIconURI(proto));
+      image.setAttribute("alt", "");
+      image.classList.add("protoIcon");
+
+      let label = document.createXULElement("label");
+      label.setAttribute("value", proto.name);
+
+      let item = document.createXULElement("richlistitem");
+      item.setAttribute("value", proto.id);
+      item.appendChild(image);
+      item.appendChild(label);
+      protoList.appendChild(item);
     });
 
     // there is a strange selection bug without this timeout
-    setTimeout(function() {
+    setTimeout(function () {
       protoList.selectedIndex = 0;
     }, 0);
 
-    Services.obs.addObserver(this, "prpl-quit", false);
+    Services.obs.addObserver(this, "prpl-quit");
     window.addEventListener("unload", this.unload);
   },
-  unload: function aw_unload() {
+  unload() {
     Services.obs.removeObserver(accountWizard, "prpl-quit");
   },
-  observe: function am_observe(aObject, aTopic, aData) {
+  observe(aObject, aTopic, aData) {
     if (aTopic == "prpl-quit") {
       // libpurple is being uninitialized. We can't create any new
       // account so keeping this wizard open would be pointless, close it.
@@ -79,17 +95,31 @@ var accountWizard = {
     }
   },
 
-  getUsername: function aw_getUsername() {
-    // If the first username textbox is empty, make sure we return an empty
+  /**
+   * Builds the full username from the username boxes.
+   *
+   * @returns {string} assembled username
+   */
+  getUsername() {
+    let usernameBoxIndex = 0;
+    if (this.proto.usernamePrefix) {
+      usernameBoxIndex = 1;
+    }
+    // If the first username input is empty, make sure we return an empty
     // string so that it blocks the 'next' button of the wizard.
-    if (!this.userNameBoxes[0].value)
+    if (!this.userNameBoxes[usernameBoxIndex].value) {
       return "";
+    }
 
-    return this.userNameBoxes.reduce(function(prev, elt) prev + elt.value, "");
+    return this.userNameBoxes.reduce((prev, elt) => prev + elt.value, "");
   },
 
-  checkUsername: function aw_checkUsername() {
-    var wizard = document.getElementById("accountWizard");
+  /**
+   * Check that the username fields generate a new username, and if it is valid
+   * allow advancing the wizard.
+   */
+  checkUsername() {
+    var wizard = document.querySelector("wizard");
     var name = accountWizard.getUsername();
     var duplicateWarning = document.getElementById("duplicateAccount");
     if (!name) {
@@ -103,41 +133,81 @@ var accountWizard = {
     duplicateWarning.hidden = !exists;
   },
 
-  selectProtocol: function aw_selectProtocol() {
-    var protoList = document.getElementById("protolist");
-    var id = protoList.selectedItem.value;
-    this.proto = Services.core.getProtocolById(id);
-
-    return true;
+  /**
+   * Takes the value of the primary username field and splits it if the value
+   * matches the split field syntax.
+   */
+  splitUsername() {
+    let usernameBoxIndex = 0;
+    if (this.proto.usernamePrefix) {
+      usernameBoxIndex = 1;
+    }
+    let username = this.userNameBoxes[usernameBoxIndex].value;
+    let splitValues = this.proto.splitUsername(username);
+    if (!splitValues.length) {
+      return;
+    }
+    for (const box of this.userNameBoxes) {
+      if (Element.isInstance(box)) {
+        box.value = splitValues.shift();
+      }
+    }
+    this.checkUsername();
   },
 
+  selectProtocol() {
+    var protoList = document.getElementById("protolist");
+    var id = protoList.selectedItem.value;
+    this.proto = IMServices.core.getProtocolById(id);
+  },
 
-  insertUsernameField: function aw_insertUsernameField(aName, aLabel, aParent,
-                                                       aDefaultValue) {
-    var hbox = document.createElement("hbox");
-    hbox.setAttribute("id", aName + "-hbox");
-    hbox.setAttribute("align", "baseline");
-    hbox.setAttribute("equalsize", "always");
-
-    var label = document.createElement("label");
+  /**
+   * Create a new input field for receiving a username.
+   *
+   * @param {string} aName - The id for the input.
+   * @param {string} aLabel - The text for the username label.
+   * @param {Element} grid - A container with a two column grid display to
+   *   append the new elements to.
+   * @param {string} [aDefaultValue] - The initial value for the username.
+   *
+   * @returns {HTMLInputElement} - The newly created username input.
+   */
+  insertUsernameField(aName, aLabel, grid, aDefaultValue) {
+    var label = document.createXULElement("label");
     label.setAttribute("value", aLabel);
     label.setAttribute("control", aName);
     label.setAttribute("id", aName + "-label");
-    hbox.appendChild(label);
+    label.classList.add("label-inline");
+    grid.appendChild(label);
 
-    var textbox = document.createElement("textbox");
-    textbox.setAttribute("id", aName);
-    textbox.setAttribute("flex", 1);
-    if (aDefaultValue)
-      textbox.setAttribute("value", aDefaultValue);
-    textbox.addEventListener("input", accountWizard.checkUsername);
-    hbox.appendChild(textbox);
+    var input = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "input"
+    );
+    input.setAttribute("id", aName);
+    input.classList.add("input-inline");
+    if (aDefaultValue) {
+      input.setAttribute("value", aDefaultValue);
+    }
+    input.addEventListener("input", event => {
+      this.checkUsername();
+    });
+    // Only add the split logic to the first input field
+    if (!this.userNameBoxes) {
+      input.addEventListener("blur", event => {
+        this.splitUsername();
+      });
+    }
+    grid.appendChild(input);
 
-    aParent.appendChild(hbox);
-    return textbox;
+    return input;
   },
 
-  showUsernamePage: function aw_showUsernamePage() {
+  /**
+   * Builds the username input boxes from the username split defined by the
+   * protocol.
+   */
+  showUsernamePage() {
     var proto = this.proto.id;
     if ("userNameBoxes" in this && this.userNameProto == proto) {
       this.checkUsername();
@@ -148,268 +218,214 @@ var accountWizard = {
     var usernameInfo;
     var emptyText = this.proto.usernameEmptyText;
     if (emptyText) {
-      usernameInfo =
-        bundle.getFormattedString("accountUsernameInfoWithDescription",
-                                  [emptyText, this.proto.name]);
-    }
-    else {
-      usernameInfo =
-        bundle.getFormattedString("accountUsernameInfo", [this.proto.name]);
+      usernameInfo = bundle.getFormattedString(
+        "accountUsernameInfoWithDescription",
+        [emptyText, this.proto.name]
+      );
+    } else {
+      usernameInfo = bundle.getFormattedString("accountUsernameInfo", [
+        this.proto.name,
+      ]);
     }
     document.getElementById("usernameInfo").textContent = usernameInfo;
 
-    var vbox = document.getElementById("userNameBox");
+    var grid = document.getElementById("userNameBox");
     // remove anything that may be there for another protocol
-    var child;
-    while ((child = vbox.firstChild))
-      vbox.removeChild(child);
+    while (grid.hasChildNodes()) {
+      grid.lastChild.remove();
+    }
+    this.userNameBoxes = undefined;
 
-    var splits = [];
-    for (let split in this.getProtoUserSplits())
-      splits.push(split);
+    var splits = this.proto.getUsernameSplit();
 
     var label = bundle.getString("accountUsername");
-    this.userNameBoxes = [this.insertUsernameField("name", label, vbox)];
+    this.userNameBoxes = [this.insertUsernameField("name", label, grid)];
     this.userNameBoxes[0].emptyText = emptyText;
+    let usernameBoxIndex = 0;
+
+    if (this.proto.usernamePrefix) {
+      this.userNameBoxes.unshift({ value: this.proto.usernamePrefix });
+      usernameBoxIndex = 1;
+    }
 
     for (let i = 0; i < splits.length; ++i) {
-      this.userNameBoxes.push({value: splits[i].separator});
+      this.userNameBoxes.push({ value: splits[i].separator });
       label = bundle.getFormattedString("accountColon", [splits[i].label]);
       let defaultVal = splits[i].defaultValue;
-      this.userNameBoxes.push(this.insertUsernameField("username-split-" + i,
-                                                       label, vbox,
-                                                       defaultVal));
+      this.userNameBoxes.push(
+        this.insertUsernameField("username-split-" + i, label, grid, defaultVal)
+      );
     }
-    this.userNameBoxes[0].focus();
+    this.userNameBoxes[usernameBoxIndex].focus();
     this.userNameProto = proto;
     this.checkUsername();
   },
 
-  hideUsernamePage: function aw_hideUsernamePage() {
-    document.getElementById("accountWizard").canAdvance = true;
-    var next = "account" +
-      (this.proto.noPassword ? "advanced" : "password");
+  hideUsernamePage() {
+    document.querySelector("wizard").canAdvance = true;
+    var next = "account" + (this.proto.noPassword ? "advanced" : "password");
     document.getElementById("accountusername").next = next;
   },
 
-  showAdvanced: function aw_showAdvanced() {
+  showAdvanced() {
     // ensure we don't destroy user data if it's not necessary
     var id = this.proto.id;
-    if ("protoSpecOptId" in this && this.protoSpecOptId == id)
+    if ("protoSpecOptId" in this && this.protoSpecOptId == id) {
       return;
+    }
     this.protoSpecOptId = id;
 
     this.populateProtoSpecificBox();
+
+    // Make sure the protocol specific options and wizard buttons are visible.
+    let wizard = document.querySelector("wizard");
+    if (wizard.scrollHeight > window.innerHeight) {
+      window.resizeBy(0, wizard.scrollHeight - window.innerHeight);
+    }
 
     let alias = document.getElementById("alias");
     alias.focus();
   },
 
-  createTextbox: function aw_createTextbox(aType, aValue, aLabel, aName) {
-    var box = document.createElement("hbox");
-    box.setAttribute("align", "baseline");
-    box.setAttribute("equalsize", "always");
-
-    var label = document.createElement("label");
-    label.setAttribute("value", aLabel);
-    label.setAttribute("control", aName);
-    box.appendChild(label);
-
-    var textbox = document.createElement("textbox");
-    if (aType)
-      textbox.setAttribute("type", aType);
-    textbox.setAttribute("value", aValue);
-    textbox.setAttribute("id", aName);
-    textbox.setAttribute("flex", "1");
-
-    box.appendChild(textbox);
-    return box;
-  },
-
-  createMenulist: function aw_createMenulist(aList, aLabel, aName) {
-    var box = document.createElement("hbox");
-    box.setAttribute("align", "baseline");
-
-    var label = document.createElement("label");
-    label.setAttribute("value", aLabel);
-    label.setAttribute("control", aName);
-    box.appendChild(label);
-
-    aList.QueryInterface(Ci.nsISimpleEnumerator);
-    var menulist = document.createElement("menulist");
-    menulist.setAttribute("id", aName);
-    var popup = menulist.appendChild(document.createElement("menupopup"));
-    while (aList.hasMoreElements()) {
-      let elt = aList.getNext();
-      let item = document.createElement("menuitem");
-      item.setAttribute("label", elt.name);
-      item.setAttribute("value", elt.value);
-      popup.appendChild(item);
-    }
-    box.appendChild(menulist);
-    return box;
-  },
-
-  populateProtoSpecificBox: function aw_populate() {
-    var id = this.proto.id;
-    var box = document.getElementById("protoSpecific");
-    var child;
-    while ((child = box.firstChild))
-      box.removeChild(child);
-    var visible = false;
-    for (let opt in this.getProtoOptions()) {
-      var text = opt.label;
-      var name = id + "-" + opt.name;
-      switch (opt.type) {
-      case opt.typeBool:
-        var chk = document.createElement("checkbox");
-        chk.setAttribute("label", text);
-        chk.setAttribute("id", name);
-        if (opt.getBool())
-          chk.setAttribute("checked", "true");
-        box.appendChild(chk);
-        break;
-      case opt.typeInt:
-        box.appendChild(this.createTextbox("number", opt.getInt(),
-                                           text, name));
-        break;
-      case opt.typeString:
-        box.appendChild(this.createTextbox(null, opt.getString(), text, name));
-        break;
-      case opt.typeList:
-        box.appendChild(this.createMenulist(opt.getList(), text, name));
-        document.getElementById(name).value = opt.getListDefault();
-        break;
-      default:
-        throw "unknown preference type " + opt.type;
-      }
-      visible = true;
-    }
-    document.getElementById("protoSpecificGroupbox").hidden = !visible;
-    if (visible) {
+  populateProtoSpecificBox() {
+    let haveOptions = accountOptionsHelper.addOptions(
+      this.proto.id + "-",
+      this.proto.getOptions()
+    );
+    document.getElementById("protoSpecificGroupbox").hidden = !haveOptions;
+    if (haveOptions) {
       var bundle = document.getElementById("accountsBundle");
-      document.getElementById("protoSpecificCaption").label =
+      document.getElementById("protoSpecificCaption").textContent =
         bundle.getFormattedString("protoOptions", [this.proto.name]);
     }
   },
 
-  createSummaryRow: function aw_createSummaryRow(aLabel, aValue) {
-    var row = document.createElement("row");
-    row.setAttribute("align", "baseline");
-
-    var label = document.createElement("label");
-    label.setAttribute("class", "header");
+  /**
+   * Create new summary field and value elements.
+   *
+   * @param {string} aLabel - The name of the field being summarised.
+   * @param {string} aValue - The value of the field being summarised.
+   * @param {Element} grid - A container with a two column grid display to
+   *   append the new elements to.
+   */
+  createSummaryRow(aLabel, aValue, grid) {
+    var label = document.createXULElement("label");
+    label.classList.add("header", "label-inline");
     if (aLabel.length > 20) {
       aLabel = aLabel.substring(0, 20);
       aLabel += "…";
     }
+
     label.setAttribute("value", aLabel);
-    row.appendChild(label);
+    grid.appendChild(label);
 
-    var textbox = document.createElement("textbox");
-    textbox.setAttribute("value", aValue);
-    textbox.setAttribute("class", "plain");
-    textbox.setAttribute("readonly", true);
-    row.appendChild(textbox);
-
-    return row;
+    var input = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "input"
+    );
+    input.setAttribute("value", aValue);
+    input.classList.add("plain", "input-inline");
+    input.setAttribute("readonly", true);
+    grid.appendChild(input);
   },
 
-  showSummary: function aw_showSummary() {
+  showSummary() {
     var rows = document.getElementById("summaryRows");
     var bundle = document.getElementById("accountsBundle");
-    var child;
-    while ((child = rows.firstChild))
-      rows.removeChild(child);
+    while (rows.hasChildNodes()) {
+      rows.lastChild.remove();
+    }
 
     var label = document.getElementById("protoLabel").value;
-    rows.appendChild(this.createSummaryRow(label, this.proto.name));
+    this.createSummaryRow(label, this.proto.name, rows);
     this.username = this.getUsername();
     label = bundle.getString("accountUsername");
-    rows.appendChild(this.createSummaryRow(label, this.username));
+    this.createSummaryRow(label, this.username, rows);
     if (!this.proto.noPassword) {
       this.password = this.getValue("password");
       if (this.password) {
         label = document.getElementById("passwordLabel").value;
         var pass = "";
-        for (let i = 0; i < this.password.length; ++i)
+        for (let i = 0; i < this.password.length; ++i) {
           pass += "*";
-        rows.appendChild(this.createSummaryRow(label, pass));
+        }
+        this.createSummaryRow(label, pass, rows);
       }
     }
     this.alias = this.getValue("alias");
     if (this.alias) {
       label = document.getElementById("aliasLabel").value;
-      rows.appendChild(this.createSummaryRow(label, this.alias));
+      this.createSummaryRow(label, this.alias, rows);
     }
 
-/* FIXME
-    if (this.proto.newMailNotification)
-      rows.appendChild(this.createSummaryRow("Notify of new mails:",
-                                             this.getValue("newMailNotification")));
-*/
-
     var id = this.proto.id;
-    this.prefs = [ ];
-    for (let opt in this.getProtoOptions()) {
+    this.prefs = [];
+    for (let opt of this.proto.getOptions()) {
       let name = opt.name;
       let eltName = id + "-" + name;
       let val = this.getValue(eltName);
       // The value will be undefined if the proto specific groupbox has never been opened
-      if (val === undefined)
+      if (val === undefined) {
         continue;
+      }
       switch (opt.type) {
-      case opt.typeBool:
-        if (val != opt.getBool())
-          this.prefs.push({opt: opt, name: name, value: !!val});
-        break;
-      case opt.typeInt:
-        if (val != opt.getInt())
-          this.prefs.push({opt: opt, name: name, value: val});
-        break;
-      case opt.typeString:
-        if (val != opt.getString())
-          this.prefs.push({opt: opt, name: name, value: val});
-        break;
-      case opt.typeList:
-        if (val != opt.getListDefault())
-          this.prefs.push({opt: opt, name: name, value: val});
-        break;
-      default:
-        throw "unknown preference type " + opt.type;
+        case Ci.prplIPref.typeBool:
+          if (val != opt.getBool()) {
+            this.prefs.push({ opt, name, value: !!val });
+          }
+          break;
+        case Ci.prplIPref.typeInt:
+          if (val != opt.getInt()) {
+            this.prefs.push({ opt, name, value: val });
+          }
+          break;
+        case Ci.prplIPref.typeString:
+          if (val != opt.getString()) {
+            this.prefs.push({ opt, name, value: val });
+          }
+          break;
+        case Ci.prplIPref.typeList:
+          if (val != opt.getListDefault()) {
+            this.prefs.push({ opt, name, value: val });
+          }
+          break;
+        default:
+          throw new Error("unknown preference type " + opt.type);
       }
     }
 
     for (let i = 0; i < this.prefs.length; ++i) {
       let opt = this.prefs[i];
       let label = bundle.getFormattedString("accountColon", [opt.opt.label]);
-      rows.appendChild(this.createSummaryRow(label, opt.value));
+      this.createSummaryRow(label, opt.value, rows);
     }
   },
 
-  createAccount: function aw_createAccount() {
-    var acc = Services.accounts.createAccount(this.username, this.proto.id);
-    if (!this.proto.noPassword && this.password)
+  createAccount() {
+    var acc = IMServices.accounts.createAccount(this.username, this.proto.id);
+    if (!this.proto.noPassword && this.password) {
       acc.password = this.password;
-    if (this.alias)
+    }
+    if (this.alias) {
       acc.alias = this.alias;
+    }
 
     for (let i = 0; i < this.prefs.length; ++i) {
       let option = this.prefs[i];
       let opt = option.opt;
-      switch(opt.type) {
-      case opt.typeBool:
-        acc.setBool(option.name, option.value);
-        break;
-      case opt.typeInt:
-        acc.setInt(option.name, option.value);
-        break;
-      case opt.typeString:
-      case opt.typeList:
-        acc.setString(option.name, option.value);
-        break;
-      default:
-        throw "unknown type";
+      switch (opt.type) {
+        case Ci.prplIPref.typeBool:
+          acc.setBool(option.name, option.value);
+          break;
+        case Ci.prplIPref.typeInt:
+          acc.setInt(option.name, option.value);
+          break;
+        case Ci.prplIPref.typeString:
+        case Ci.prplIPref.typeList:
+          acc.setString(option.name, option.value);
+          break;
+        default:
+          throw new Error("unknown type");
       }
     }
     var autologin = this.getValue("connectNow");
@@ -418,8 +434,9 @@ var accountWizard = {
     acc.save();
 
     try {
-      if (autologin)
+      if (autologin) {
         acc.connect();
+      }
     } catch (e) {
       // If the connection fails (for example if we are currently in
       // offline mode), we still want to close the account wizard
@@ -427,102 +444,83 @@ var accountWizard = {
 
     if (window.opener) {
       var am = window.opener.gAccountManager;
-      if (am)
+      if (am) {
         am.selectAccount(acc.id);
+      }
     }
 
-    var accountManager = Cc["@mozilla.org/messenger/account-manager;1"]
-                           .getService(Ci.nsIMsgAccountManager);
-    
-    var inServer =
-      accountManager.createIncomingServer(this.username,
-                                          this.proto.id, // hostname
-                                          "im");
+    var inServer = MailServices.accounts.createIncomingServer(
+      this.username,
+      this.proto.id, // hostname
+      "im"
+    );
     inServer.wrappedJSObject.imAccount = acc;
 
-    var account = accountManager.createAccount();
+    var account = MailServices.accounts.createAccount();
     // Avoid new folder notifications.
     inServer.valid = false;
     account.incomingServer = inServer;
     inServer.valid = true;
-    accountManager.notifyServerLoaded(inServer);
+    MailServices.accounts.notifyServerLoaded(inServer);
 
     return true;
   },
 
-  getValue: function aw_getValue(aId) {
+  getValue(aId) {
     var elt = document.getElementById(aId);
-    if ("checked" in elt)
+    if ("selectedItem" in elt) {
+      return elt.selectedItem.value;
+    }
+    // Strangely various input types also have a "checked" property defined,
+    // so we check for the expected elements explicitly.
+    if (
+      ((elt.localName == "input" && elt.getAttribute("type") == "checkbox") ||
+        elt.localName == "checkbox") &&
+      "checked" in elt
+    ) {
       return elt.checked;
-    if ("value" in elt)
+    }
+    if ("value" in elt) {
       return elt.value;
+    }
     // If the groupbox has never been opened, the binding isn't attached
     // so the attributes don't exist. The calling code in showSummary
     // has a special handling of the undefined value for this case.
     return undefined;
   },
 
-  getIter: function(aEnumerator) {
-    while (aEnumerator.hasMoreElements())
-      yield aEnumerator.getNext();
-  },
-  getProtocols: function aw_getProtocols()
-    this.getIter(Services.core.getProtocols()),
-  getProtoOptions: function aw_getProtoOptions()
-    this.getIter(this.proto.getOptions()),
-  getProtoUserSplits: function aw_getProtoUserSplits()
-    this.getIter(this.proto.getUsernameSplit()),
-
-  onGroupboxKeypress: function aw_onGroupboxKeypress(aEvent) {
-    var target = aEvent.target;
-    var code = aEvent.charCode || aEvent.keyCode;
-    if (code == KeyEvent.DOM_VK_SPACE ||
-        (code == KeyEvent.DOM_VK_LEFT && !target.hasAttribute("closed")) ||
-        (code == KeyEvent.DOM_VK_RIGHT && target.hasAttribute("closed")))
-        this.toggleGroupbox(target.id);
-  },
-
-  toggleGroupbox: function aw_toggleGroupbox(id) {
-    var elt = document.getElementById(id);
-    if (elt.hasAttribute("closed")) {
-      elt.removeAttribute("closed");
-      if (elt.flexWhenOpened)
-        elt.flex = elt.flexWhenOpened;
-    }
-    else {
-      elt.setAttribute("closed", "true");
-      if (elt.flex) {
-        elt.flexWhenOpened = elt.flex;
-        elt.flex = 0;
-      }
+  *getIter(aEnumerator) {
+    for (let iter of aEnumerator) {
+      yield iter;
     }
   },
 
   /* Check for correctness and set URL for the "Get more protocols..."-link
    *  Stripped down code from preferences/themes.js
    */
-  setGetMoreProtocols: function (){
+  setGetMoreProtocols() {
     let prefURL = PREF_EXTENSIONS_GETMOREPROTOCOLSURL;
     var getMore = document.getElementById("getMoreProtocols");
     var showGetMore = false;
-    const nsIPrefBranch2 = Components.interfaces.nsIPrefBranch2;
+    const nsIPrefBranch = Ci.nsIPrefBranch;
 
-    if (Services.prefs.getPrefType(prefURL) != nsIPrefBranch2.PREF_INVALID) {
+    if (Services.prefs.getPrefType(prefURL) != nsIPrefBranch.PREF_INVALID) {
       try {
-        var getMoreURL = Components.classes["@mozilla.org/toolkit/URLFormatterService;1"]
-                                   .getService(Components.interfaces.nsIURLFormatter)
-                                   .formatURLPref(prefURL);
+        var getMoreURL = Services.urlFormatter.formatURLPref(prefURL);
         getMore.setAttribute("getMoreURL", getMoreURL);
         showGetMore = getMoreURL != "about:blank";
-      }
-      catch (e) { }
+      } catch (e) {}
     }
     getMore.hidden = !showGetMore;
   },
 
-  openURL: function (aURL) {
-    Components.classes["@mozilla.org/uriloader/external-protocol-service;1"]
-              .getService(Components.interfaces.nsIExternalProtocolService)
-              .loadUrl(Services.io.newURI(aURL, null, null));
-  }
+  openURL(aURL) {
+    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
+      .getService(Ci.nsIExternalProtocolService)
+      .loadURI(Services.io.newURI(aURL));
+  },
 };
+
+window.addEventListener("load", event => {
+  accountWizard.onload();
+});

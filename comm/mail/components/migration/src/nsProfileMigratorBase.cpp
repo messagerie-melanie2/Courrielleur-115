@@ -1,40 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is The Mail Profile Migrator.
- *
- * The Initial Developer of the Original Code is Scott MacGregor.
- * Portions created by the Initial Developer are Copyright (C) 2004
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Scott MacGregor <mscott@mozilla.org>
- *  Jeff Beckley <beckley@qualcomm.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsMailProfileMigratorUtils.h"
 #include "nsISupportsPrimitives.h"
@@ -43,64 +10,73 @@
 
 #include "nsIImportSettings.h"
 #include "nsIImportFilters.h"
+#include "nsComponentManagerUtils.h"
+#include "nsServiceManagerUtils.h"
 
-#define kPersonalAddressbookUri "moz-abmdbdirectory://abook.mab"
+#define kPersonalAddressbookUri "jsaddrbook://abook.sqlite"
 
-nsProfileMigratorBase::nsProfileMigratorBase()
-{
+nsProfileMigratorBase::nsProfileMigratorBase() {
   mObserverService = do_GetService("@mozilla.org/observer-service;1");
   mProcessingMailFolders = false;
 }
 
-nsProfileMigratorBase::~nsProfileMigratorBase()
-{
-  if (mFileIOTimer)
-    mFileIOTimer->Cancel();
+nsProfileMigratorBase::~nsProfileMigratorBase() {
+  if (mFileIOTimer) mFileIOTimer->Cancel();
 }
 
-nsresult nsProfileMigratorBase::ImportSettings(nsIImportModule * aImportModule)
-{
+nsresult nsProfileMigratorBase::ImportSettings(nsIImportModule* aImportModule) {
   nsresult rv;
 
   nsAutoString index;
   index.AppendInt(nsIMailProfileMigrator::ACCOUNT_SETTINGS);
   NOTIFY_OBSERVERS(MIGRATION_ITEMBEFOREMIGRATE, index.get());
 
-  nsCOMPtr<nsIImportSettings> importSettings;
-  rv = aImportModule->GetImportInterface(NS_IMPORT_SETTINGS_STR, getter_AddRefs(importSettings));
+  nsCOMPtr<nsISupports> supports;
+  rv = aImportModule->GetImportInterface(NS_IMPORT_SETTINGS_STR,
+                                         getter_AddRefs(supports));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIImportSettings> importSettings = do_QueryInterface(supports);
   NS_ENSURE_SUCCESS(rv, rv);
 
   bool importedSettings = false;
 
-  rv = importSettings->Import(getter_AddRefs(mLocalFolderAccount), &importedSettings);
+  rv = importSettings->Import(getter_AddRefs(mLocalFolderAccount),
+                              &importedSettings);
 
   NOTIFY_OBSERVERS(MIGRATION_ITEMAFTERMIGRATE, index.get());
 
   return rv;
 }
 
-nsresult nsProfileMigratorBase::ImportAddressBook(nsIImportModule * aImportModule)
-{
+nsresult nsProfileMigratorBase::ImportAddressBook(
+    nsIImportModule* aImportModule) {
   nsresult rv;
 
   nsAutoString index;
   index.AppendInt(nsIMailProfileMigrator::ADDRESSBOOK_DATA);
   NOTIFY_OBSERVERS(MIGRATION_ITEMBEFOREMIGRATE, index.get());
 
-  rv = aImportModule->GetImportInterface(NS_IMPORT_ADDRESS_STR, getter_AddRefs(mGenericImporter));
+  nsCOMPtr<nsISupports> supports;
+  rv = aImportModule->GetImportInterface(NS_IMPORT_ADDRESS_STR,
+                                         getter_AddRefs(supports));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsISupportsCString> pabString = do_CreateInstance(NS_SUPPORTS_CSTRING_CONTRACTID, &rv);
+  mGenericImporter = do_QueryInterface(supports);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // we want to migrate the outlook express addressbook into our personal address book
+  nsCOMPtr<nsISupportsCString> pabString =
+      do_CreateInstance(NS_SUPPORTS_CSTRING_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // We want to migrate the Outlook addressbook into our personal address book.
   pabString->SetData(nsDependentCString(kPersonalAddressbookUri));
   mGenericImporter->SetData("addressDestination", pabString);
 
   bool importResult;
   bool wantsProgress;
   mGenericImporter->WantsProgress(&wantsProgress);
-  rv = mGenericImporter->BeginImport(nsnull, nsnull, &importResult);
+  rv = mGenericImporter->BeginImport(nullptr, nullptr, &importResult);
 
   if (wantsProgress)
     ContinueImport();
@@ -110,8 +86,7 @@ nsresult nsProfileMigratorBase::ImportAddressBook(nsIImportModule * aImportModul
   return rv;
 }
 
-nsresult nsProfileMigratorBase::FinishCopyingAddressBookData()
-{
+nsresult nsProfileMigratorBase::FinishCopyingAddressBookData() {
   nsAutoString index;
   index.AppendInt(nsIMailProfileMigrator::ADDRESSBOOK_DATA);
   NOTIFY_OBSERVERS(MIGRATION_ITEMAFTERMIGRATE, index.get());
@@ -122,29 +97,34 @@ nsresult nsProfileMigratorBase::FinishCopyingAddressBookData()
   return NS_OK;
 }
 
-nsresult nsProfileMigratorBase::ImportMailData(nsIImportModule * aImportModule)
-{
+nsresult nsProfileMigratorBase::ImportMailData(nsIImportModule* aImportModule) {
   nsresult rv;
 
   nsAutoString index;
   index.AppendInt(nsIMailProfileMigrator::MAILDATA);
   NOTIFY_OBSERVERS(MIGRATION_ITEMBEFOREMIGRATE, index.get());
 
-  rv = aImportModule->GetImportInterface(NS_IMPORT_MAIL_STR, getter_AddRefs(mGenericImporter));
+  nsCOMPtr<nsISupports> supports;
+  rv = aImportModule->GetImportInterface(NS_IMPORT_MAIL_STR,
+                                         getter_AddRefs(supports));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsISupportsPRBool> migrating = do_CreateInstance(NS_SUPPORTS_PRBOOL_CONTRACTID, &rv);
+  mGenericImporter = do_QueryInterface(supports);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // by setting the migration flag, we force the import utility to install local folders from OE
-  // directly into Local Folders and not as a subfolder
+  nsCOMPtr<nsISupportsPRBool> migrating =
+      do_CreateInstance(NS_SUPPORTS_PRBOOL_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // by setting the migration flag, we force the import utility to install local
+  // folders from OE directly into Local Folders and not as a subfolder
   migrating->SetData(true);
   mGenericImporter->SetData("migration", migrating);
 
   bool importResult;
   bool wantsProgress;
   mGenericImporter->WantsProgress(&wantsProgress);
-  rv = mGenericImporter->BeginImport(nsnull, nsnull, &importResult);
+  rv = mGenericImporter->BeginImport(nullptr, nullptr, &importResult);
 
   mProcessingMailFolders = true;
 
@@ -156,8 +136,7 @@ nsresult nsProfileMigratorBase::ImportMailData(nsIImportModule * aImportModule)
   return rv;
 }
 
-nsresult nsProfileMigratorBase::FinishCopyingMailFolders()
-{
+nsresult nsProfileMigratorBase::FinishCopyingMailFolders() {
   nsAutoString index;
   index.AppendInt(nsIMailProfileMigrator::MAILDATA);
   NOTIFY_OBSERVERS(MIGRATION_ITEMAFTERMIGRATE, index.get());
@@ -166,21 +145,21 @@ nsresult nsProfileMigratorBase::FinishCopyingMailFolders()
   return ImportFilters(mImportModule);
 }
 
-nsresult nsProfileMigratorBase::ImportFilters(nsIImportModule * aImportModule)
-{
+nsresult nsProfileMigratorBase::ImportFilters(nsIImportModule* aImportModule) {
   nsresult rv = NS_OK;
 
-  nsCOMPtr<nsIImportFilters> importFilters;
-  nsresult rv2 = aImportModule->GetImportInterface(NS_IMPORT_FILTERS_STR, getter_AddRefs(importFilters));
+  nsCOMPtr<nsISupports> supports;
+  nsresult rv2 = aImportModule->GetImportInterface(NS_IMPORT_FILTERS_STR,
+                                                   getter_AddRefs(supports));
+  nsCOMPtr<nsIImportFilters> importFilters = do_QueryInterface(supports);
 
-  if (NS_SUCCEEDED(rv2))
-  {
+  if (NS_SUCCEEDED(rv2) && importFilters) {
     nsAutoString index;
     index.AppendInt(nsIMailProfileMigrator::FILTERS);
     NOTIFY_OBSERVERS(MIGRATION_ITEMBEFOREMIGRATE, index.get());
 
     bool importedFilters = false;
-    PRUnichar* error;
+    char16_t* error;
 
     rv = importFilters->Import(&error, &importedFilters);
 
@@ -188,8 +167,7 @@ nsresult nsProfileMigratorBase::ImportFilters(nsIImportModule * aImportModule)
   }
 
   // migration is now done...notify the UI.
-  NOTIFY_OBSERVERS(MIGRATION_ENDED, nsnull);
+  NOTIFY_OBSERVERS(MIGRATION_ENDED, nullptr);
 
   return rv;
 }
-

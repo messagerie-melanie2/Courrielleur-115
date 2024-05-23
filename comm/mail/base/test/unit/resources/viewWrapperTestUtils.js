@@ -1,149 +1,97 @@
-/* ***** BEGIN LICENSE BLOCK *****
- *   Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Thunderbird Mail Client.
- *
- * The Initial Developer of the Original Code is
- * the Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2009
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Andrew Sutherland <asutherland@asutherland.org>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-Components.utils.import("resource:///modules/dbViewWrapper.js");
-Components.utils.import("resource:///modules/mailViewManager.js");
-Components.utils.import("resource:///modules/virtualFolderWrapper.js");
+var { DBViewWrapper, IDBViewWrapperListener } = ChromeUtils.import(
+  "resource:///modules/DBViewWrapper.jsm"
+);
+var { MailViewManager, MailViewConstants } = ChromeUtils.import(
+  "resource:///modules/MailViewManager.jsm"
+);
+var { VirtualFolderHelper } = ChromeUtils.import(
+  "resource:///modules/VirtualFolderWrapper.jsm"
+);
+var { MessageGenerator, MessageScenarioFactory } = ChromeUtils.import(
+  "resource://testing-common/mailnews/MessageGenerator.jsm"
+);
+var { MessageInjection } = ChromeUtils.import(
+  "resource://testing-common/mailnews/MessageInjection.jsm"
+);
+var { dump_view_state } = ChromeUtils.import(
+  "resource://testing-common/mozmill/ViewHelpers.jsm"
+);
 
-var gInbox;
+var gMessageGenerator;
+var gMessageScenarioFactory;
+var messageInjection;
+var gMockViewWrapperListener;
 
-/**
- * Do initialization for xpcshell-tests; not used by
- *  test-folder-display-helpers.js, our friendly mozmill test helper.
- */
 function initViewWrapperTestUtils(aInjectionConfig) {
+  if (!aInjectionConfig) {
+    throw new Error("Please provide an injection config for MessageInjection.");
+  }
+
   gMessageGenerator = new MessageGenerator();
   gMessageScenarioFactory = new MessageScenarioFactory(gMessageGenerator);
 
-  async_test_runner_register_helper(VWTU_testHelper);
-  register_message_injection_listener(VWTU_testHelper);
-  if (aInjectionConfig)
-    gInbox = configure_message_injection(aInjectionConfig);
-  else
-    gInbox = configure_message_injection({mode: "local"});
+  messageInjection = new MessageInjection(aInjectionConfig, gMessageGenerator);
+  messageInjection.registerMessageInjectionListener(VWTU_testHelper);
+  registerCleanupFunction(() => {
+    // Cleanup of VWTU_testHelper.
+    VWTU_testHelper.postTest();
+  });
+  gMockViewWrapperListener = new MockViewWrapperListener();
 }
 
-// something less sucky than do_check_true
+// Something less sucky than do_check_true.
 function assert_true(aBeTrue, aWhy, aDumpView) {
   if (!aBeTrue) {
-    if (aDumpView)
+    if (aDumpView) {
       dump_view_state(VWTU_testHelper.active_view_wrappers[0]);
+    }
     do_throw(aWhy);
   }
 }
 
 function assert_false(aBeFalse, aWhy, aDumpView) {
   if (aBeFalse) {
-    if (aDumpView)
+    if (aDumpView) {
       dump_view_state(VWTU_testHelper.active_view_wrappers[0]);
+    }
     do_throw(aWhy);
   }
 }
 
 function assert_equals(aA, aB, aWhy, aDumpView) {
   if (aA != aB) {
-    if (aDumpView)
+    if (aDumpView) {
       dump_view_state(VWTU_testHelper.active_view_wrappers[0]);
+    }
     do_throw(aWhy);
   }
 }
 
 function assert_bit_set(aWhat, aBit, aWhy) {
-  if (!(aWhat & aBit))
+  if (!(aWhat & aBit)) {
     do_throw(aWhy);
+  }
 }
 
 function assert_bit_not_set(aWhat, aBit, aWhy) {
-  if (aWhat & aBit)
+  if (aWhat & aBit) {
     do_throw(aWhy);
+  }
 }
 
 var gFakeCommandUpdater = {
-  updateCommandStatus : function() {
-  },
+  updateCommandStatus() {},
 
-  displayMessageChanged : function(aFolder, aSubject, aKeywords) {
-  },
+  displayMessageChanged(aFolder, aSubject, aKeywords) {},
 
-  summarizeSelection: function () {
-  },
+  summarizeSelection() {},
 
-  updateNextMessageAfterDelete : function() {
-  }
+  updateNextMessageAfterDelete() {},
 };
-
-var gMockViewWrapperListener = {
-  __proto__: IDBViewWrapperListener.prototype,
-  shouldUseMailViews: true,
-  shouldDeferMessageDisplayUntilAfterServerConnect: false,
-  shouldMarkMessagesReadOnLeavingFolder : function(aMsgFolder) {
-      return Cc["@mozilla.org/preferences-service;1"]
-                 .getService(Ci.nsIPrefBranch)
-                 .getBoolPref("mailnews.mark_message_read." +
-                              aMsgFolder.server.type);
-  },
-  messenger: null,
-  // use no message window!
-  msgWindow: null,
-  threadPaneCommandUpdater: gFakeCommandUpdater,
-  // event handlers
-  allMessagesLoadedEventCount: 0,
-  onMessagesLoaded: function(aAll) {
-    dump(aAll ? "ALL LOADED\n" : "SOME LOADED\n");
-    if (!aAll)
-      return;
-    this.allMessagesLoadedEventCount++;
-    if (this.pendingLoad) {
-      this.pendingLoad = false;
-      async_driver();
-    }
-  },
-
-  messagesRemovedEventCount: 0,
-  onMessagesRemoved: function() {
-    this.messagesRemovedEventCount++;
-  }
-};
-
-function punt() {
-  dump("  ******************************\n");
-  dump("  *** PUNTING! implement me! ***\n");
-  dump("  ******************************\n");
-}
 
 /**
  * Track our resources used by each test.  This is so we can keep our memory
@@ -156,35 +104,33 @@ var VWTU_testHelper = {
   active_real_folders: [],
   active_virtual_folders: [],
 
-  onVirtualFolderCreated: function(aVirtualFolder) {
+  onVirtualFolderCreated(aVirtualFolder) {
     this.active_virtual_folders.push(aVirtualFolder);
   },
 
-  postTest: function () {
-    // close all the views we opened
+  postTest() {
+    // Close all the views we opened.
     this.active_view_wrappers.forEach(function (wrapper) {
       wrapper.close();
     });
-    // verify that the notification helper has no outstanding listeners.
+    // Verify that the notification helper has no outstanding listeners.
     if (IDBViewWrapperListener.prototype._FNH.haveListeners()) {
       let msg = "FolderNotificationHelper has listeners, but should not.";
       dump("*** " + msg + "\n");
       dump("Pending URIs:\n");
-      for each (let [folderURI, wrappers] in
-                Iterator(IDBViewWrapperListener.prototype._FNH
-                           ._pendingFolderUriToViewWrapperLists)) {
+      for (let folderURI in IDBViewWrapperListener.prototype._FNH
+        ._pendingFolderUriToViewWrapperLists) {
         dump("  " + folderURI + "\n");
       }
       dump("Interested wrappers:\n");
-      for each (let [folderURI, wrappers] in
-                Iterator(IDBViewWrapperListener.prototype._FNH
-                           ._interestedWrappers)) {
+      for (let folderURI in IDBViewWrapperListener.prototype._FNH
+        ._interestedWrappers) {
         dump("  " + folderURI + "\n");
       }
       dump("***\n");
       do_throw(msg);
     }
-    // force the folder to forget about the message database
+    // Force the folder to forget about the message database.
     this.active_virtual_folders.forEach(function (folder) {
       folder.msgDatabase = null;
     });
@@ -198,21 +144,21 @@ var VWTU_testHelper = {
 
     gMockViewWrapperListener.allMessagesLoadedEventCount = 0;
   },
-  onTimeout: function () {
+  onTimeout() {
     dump("-----------------------------------------------------------\n");
     dump("Active things at time of timeout:\n");
-    for each (let [, folder] in Iterator(this.active_real_folders)) {
+    for (let folder of this.active_real_folders) {
       dump("Real folder: " + folder.prettyName + "\n");
     }
-    for each (let [, virtFolder] in Iterator(this.active_virtual_folders)) {
+    for (let virtFolder of this.active_virtual_folders) {
       dump("Virtual folder: " + virtFolder.prettyName + "\n");
     }
-    for each (let [i, viewWrapper] in Iterator(this.active_view_wrappers)) {
+    for (let [i, viewWrapper] of this.active_view_wrappers.entries()) {
       dump("-----------------------------------\n");
       dump("Active view wrapper " + i + "\n");
       dump_view_state(viewWrapper);
     }
-  }
+  },
 };
 
 function make_view_wrapper() {
@@ -234,28 +180,32 @@ function clone_view_wrapper(aViewWrapper) {
  * Open a folder for view display.  This is an async operation, relying on the
  *  onMessagesLoaded(true) notification to get he test going again.
  */
-function async_view_open(aViewWrapper, aFolder) {
+async function view_open(aViewWrapper, aFolder) {
   aViewWrapper.listener.pendingLoad = true;
   aViewWrapper.open(aFolder);
-  return false;
+  await gMockViewWrapperListener.promise;
+  gMockViewWrapperListener.resetPromise();
 }
 
-function async_view_set_mail_view(aViewWrapper, aMailViewIndex, aData) {
+async function view_set_mail_view(aViewWrapper, aMailViewIndex, aData) {
   aViewWrapper.listener.pendingLoad = true;
   aViewWrapper.setMailView(aMailViewIndex, aData);
-  return false;
+  await gMockViewWrapperListener.promise;
+  gMockViewWrapperListener.resetPromise();
 }
 
-function async_view_refresh(aViewWrapper) {
+async function view_refresh(aViewWrapper) {
   aViewWrapper.listener.pendingLoad = true;
   aViewWrapper.refresh();
-  return false;
+  await gMockViewWrapperListener.promise;
+  gMockViewWrapperListener.resetPromise();
 }
 
-function async_view_group_by_sort(aViewWrapper, aGroupBySort) {
+async function view_group_by_sort(aViewWrapper, aGroupBySort) {
   aViewWrapper.listener.pendingLoad = true;
   aViewWrapper.showGroupedBySort = aGroupBySort;
-  return false;
+  await gMockViewWrapperListener.promise;
+  gMockViewWrapperListener.resetPromise();
 }
 
 /**
@@ -286,14 +236,15 @@ function async_view_end_update(aViewWrapper) {
  * @param aDontEmptyTrash This function will empty the trash after deleting the
  *                        folder, unless you set this parameter to true.
  */
-function async_delete_folder(aFolder, aViewWrapper, aDontEmptyTrash) {
+async function delete_folder(aFolder, aViewWrapper, aDontEmptyTrash) {
   VWTU_testHelper.active_real_folders.splice(
-    VWTU_testHelper.active_real_folders.indexOf(aFolder), 1);
-  // deleting tries to be helpful and move the folder to the trash...
-  aFolder.parent.deleteSubFolders(
-    toXPCOMArray([aFolder], Ci.nsIMutableArray), null);
+    VWTU_testHelper.active_real_folders.indexOf(aFolder),
+    1
+  );
+  // Deleting tries to be helpful and move the folder to the trash...
+  aFolder.deleteSelf(null);
 
-  // ugh.  So we have the problem where that move above just triggered a
+  // Ugh.  So we have the problem where that move above just triggered a
   //  re-computation of the view... which is an asynchronous operation
   //  that we don't care about at all.  We don't need to wait for it to
   //  complete, but if we don't, we have a race on enabling this next
@@ -303,19 +254,22 @@ function async_delete_folder(aFolder, aViewWrapper, aDontEmptyTrash) {
   //  normally.  (Because things are single-threaded we are also
   //  guaranteed that we can interrupt it without needing locks or anything.)
   if (aViewWrapper) {
-    if (aViewWrapper.searching)
+    if (aViewWrapper.searching) {
       aViewWrapper.search.session.interruptSearch();
+    }
     aViewWrapper.listener.pendingLoad = true;
   }
 
-  // ...so now the stupid folder is in the stupid trash
-  // let's empty the trash, then, shall we?
-  // (for local folders it doesn't matter who we call this on.)
-  if (!aDontEmptyTrash)
-    aFolder.emptyTrash(null, null);
-  return false;
+  // ...so now the stupid folder is in the stupid trash.
+  // Let's empty the trash, then, shall we?
+  // (For local folders it doesn't matter who we call this on.)
+  if (!aDontEmptyTrash) {
+    aFolder.emptyTrash(null);
+  }
+
+  await gMockViewWrapperListener.promise;
+  gMockViewWrapperListener.resetPromise();
 }
-var delete_folder = async_delete_folder;
 
 /**
  * For assistance in debugging, dump information about a message header.
@@ -326,75 +280,25 @@ function dump_message_header(aMsgHdr) {
   dump("  Author: " + aMsgHdr.mime2DecodedAuthor + "\n");
   dump("  Recipients: " + aMsgHdr.mime2DecodedRecipients + "\n");
   let junkScore = aMsgHdr.getStringProperty("junkscore");
-  dump("  Read: " + aMsgHdr.isRead + "   Flagged: " + aMsgHdr.isFlagged +
-       "   Killed: " + aMsgHdr.isKilled + "   Junk: " + (junkScore == "100") +
-       "\n");
+  dump(
+    "  Read: " +
+      aMsgHdr.isRead +
+      "   Flagged: " +
+      aMsgHdr.isFlagged +
+      "   Killed: " +
+      aMsgHdr.isKilled +
+      "   Junk: " +
+      (junkScore == "100") +
+      "\n"
+  );
   dump("  Keywords: " + aMsgHdr.getStringProperty("Keywords") + "\n");
-  dump("  Folder: " + aMsgHdr.folder.prettyName +
-       "  Key: " + aMsgHdr.messageKey + "\n");
-}
-
-var WHITESPACE = "                                              ";
-var MSG_VIEW_FLAG_DUMMY = 0x20000000;
-function dump_view_contents(aViewWrapper) {
-  let dbView = aViewWrapper.dbView;
-  let treeView = aViewWrapper.dbView.QueryInterface(Ci.nsITreeView);
-  let rowCount = treeView.rowCount;
-
-  dump("********* Current View Contents\n");
-  for (let iViewIndex = 0; iViewIndex < rowCount; iViewIndex++) {
-    let level = treeView.getLevel(iViewIndex);
-    let viewFlags = dbView.viewFlags;
-    let flags = dbView.getFlagsAt(iViewIndex);
-    let msgHdr = dbView.getMsgHdrAt(iViewIndex);
-
-    let s = WHITESPACE.substr(0, level * 2);
-    if (treeView.isContainer(iViewIndex))
-      s += treeView.isContainerOpen(iViewIndex) ? "- " : "+ ";
-    else
-      s += ". ";
-    //s += treeView.getCellText(iViewIndex, )
-    if (flags & MSG_VIEW_FLAG_DUMMY)
-      s += "dummy: ";
-    s += dbView.cellTextForColumn(iViewIndex, "subject");
-    s += " [" + msgHdr.folder.prettyName + "," + msgHdr.messageKey + "]";
-
-    dump(s + "\n");
-  }
-  dump("********* end view contents\n");
-}
-
-function _lookupValueNameInInterface(aValue, aInterface) {
-  for each (let [key, value] in Iterator(aInterface)) {
-    if (value == aValue)
-      return key;
-  }
-  return "unknown: " + aValue;
-}
-
-function dump_view_state(aViewWrapper, aDoNotDumpContents) {
-  if (aViewWrapper.dbView == null) {
-    dump("no nsIMsgDBView instance!\n");
-    return;
-  }
-  if (!aDoNotDumpContents)
-    dump_view_contents(aViewWrapper);
-  dump("View: " + aViewWrapper.dbView + "\n");
-  dump("  View Type: " +
-       _lookupValueNameInInterface(aViewWrapper.dbView.viewType,
-                                   Components.interfaces.nsMsgViewType) +
-       "   " +
-       "View Flags: " + aViewWrapper.dbView.viewFlags + "\n");
-  dump("  Sort Type: " +
-       _lookupValueNameInInterface(aViewWrapper.dbView.sortType,
-                                   Components.interfaces.nsMsgViewSortType) +
-       "   " +
-       "Sort Order: " +
-       _lookupValueNameInInterface(aViewWrapper.dbView.sortOrder,
-                                   Components.interfaces.nsMsgViewSortOrder) +
-       "\n");
-
-  dump(aViewWrapper.search.prettyString());
+  dump(
+    "  Folder: " +
+      aMsgHdr.folder.prettyName +
+      "  Key: " +
+      aMsgHdr.messageKey +
+      "\n"
+  );
 }
 
 /**
@@ -414,14 +318,15 @@ function dump_view_state(aViewWrapper, aDoNotDumpContents) {
  * @param aViewWrapper The DBViewWrapper whose contents you want to validate.
  */
 function verify_messages_in_view(aSynSets, aViewWrapper) {
-  if (!('length' in aSynSets))
+  if (!("length" in aSynSets)) {
     aSynSets = [aSynSets];
+  }
 
   // - Iterate over all the message sets, retrieving the message header.  Use
   //  this to construct a URI to populate a dictionary mapping.
   let synMessageURIs = {}; // map URI to message header
-  for each (let [, messageSet] in Iterator(aSynSets)) {
-    for each (let msgHdr in Iterator(messageSet.msgHdrs)) {
+  for (let messageSet of aSynSets) {
+    for (let msgHdr of messageSet.msgHdrs()) {
       synMessageURIs[msgHdr.folder.getUriForMsg(msgHdr)] = msgHdr;
     }
   }
@@ -435,34 +340,41 @@ function verify_messages_in_view(aSynSets, aViewWrapper) {
   for (let iViewIndex = 0; iViewIndex < rowCount; iViewIndex++) {
     let msgHdr = dbView.getMsgHdrAt(iViewIndex);
     let uri = msgHdr.folder.getUriForMsg(msgHdr);
-    // expected hit, null it out. (in the dummy case, we will just null out
+    // Expected hit, null it out. (in the dummy case, we will just null out
     //  twice, which is also why we do an 'in' test and not a value test.
     if (uri in synMessageURIs) {
       synMessageURIs[uri] = null;
-    }
-    // the view is showing a message that should not be shown, explode.
-    else {
-      dump("The view is showing the following message header and should not" +
-           " be:\n");
+    } else {
+      // The view is showing a message that should not be shown, explode.
+      dump(
+        "The view is showing the following message header and should not" +
+          " be:\n"
+      );
       dump_message_header(msgHdr);
       dump("View State:\n");
       dump_view_state(aViewWrapper);
-      mark_failure(["view contains header that should not be present!",
-                    msgHdr]);
+      throw new Error(
+        "view contains header that should not be present! " + msgHdr.messageKey
+      );
     }
   }
 
   // - Iterate over our URI set and make sure every message got nulled out.
-  for each (let [, msgHdr] in Iterator(synMessageURIs)) {
+  for (let uri in synMessageURIs) {
+    let msgHdr = synMessageURIs[uri];
     if (msgHdr != null) {
       dump("************************\n");
-      dump("The view should have included the following message header but" +
-           " did not:\n");
+      dump(
+        "The view should have included the following message header but" +
+          " did not:\n"
+      );
       dump_message_header(msgHdr);
       dump("View State:\n");
       dump_view_state(aViewWrapper);
-      mark_failure(["view does not contain a header that should be present!",
-                    msgHdr]);
+      throw new Error(
+        "view does not contain a header that should be present! " +
+          msgHdr.messageKey
+      );
     }
   }
 }
@@ -482,7 +394,6 @@ function verify_empty_view(aViewWrapper) {
  *  something less eccentric is certainly the way that should be tested.
  */
 function verify_view_level_histogram(aExpectedHisto, aViewWrapper) {
-  let dbView = aViewWrapper.dbView;
   let treeView = aViewWrapper.dbView.QueryInterface(Ci.nsITreeView);
   let rowCount = treeView.rowCount;
 
@@ -492,12 +403,19 @@ function verify_view_level_histogram(aExpectedHisto, aViewWrapper) {
     actualHisto[level] = (actualHisto[level] || 0) + 1;
   }
 
-  for (let [level, count] in Iterator(aExpectedHisto)) {
+  for (let [level, count] of Object.entries(aExpectedHisto)) {
     if (actualHisto[level] != count) {
       dump_view_state(aViewWrapper);
       dump("*******************\n");
-      dump("Expected count for histogram level " + level + " was " + count +
-           " but got " + actualHisto[level] + "\n");
+      dump(
+        "Expected count for histogram level " +
+          level +
+          " was " +
+          count +
+          " but got " +
+          actualHisto[level] +
+          "\n"
+      );
       do_throw("View histogram does not match!");
     }
   }
@@ -510,10 +428,9 @@ function verify_view_level_histogram(aExpectedHisto, aViewWrapper) {
  * @param aViewWrapper The view wrapper in question
  * @param ... View indices to check.
  */
-function verify_view_row_at_index_is_container(aViewWrapper) {
+function verify_view_row_at_index_is_container(aViewWrapper, ...aArgs) {
   let treeView = aViewWrapper.dbView.QueryInterface(Ci.nsITreeView);
-  for (let iArg = 1; iArg < arguments.length; iArg++) {
-    let viewIndex = arguments[iArg];
+  for (let viewIndex of aArgs) {
     if (!treeView.isContainer(viewIndex)) {
       dump_view_state(aViewWrapper);
       do_throw("Expected isContainer to be true at view index " + viewIndex);
@@ -528,9 +445,9 @@ function verify_view_row_at_index_is_container(aViewWrapper) {
  * @param aViewWrapper The view wrapper in question
  * @param ... View indices to check.
  */
-function verify_view_row_at_index_is_dummy(aViewWrapper) {
-  for (let iArg = 1; iArg < arguments.length; iArg++) {
-    let viewIndex = arguments[iArg];
+function verify_view_row_at_index_is_dummy(aViewWrapper, ...aArgs) {
+  const MSG_VIEW_FLAG_DUMMY = 0x20000000;
+  for (let viewIndex of aArgs) {
     let flags = aViewWrapper.dbView.getFlagsAt(viewIndex);
     if (!(flags & MSG_VIEW_FLAG_DUMMY)) {
       dump_view_state(aViewWrapper);
@@ -546,7 +463,7 @@ function verify_view_row_at_index_is_dummy(aViewWrapper) {
  *  within a view update batch) after calling this!
  */
 function view_expand_all(aViewWrapper) {
-  // we can't use the command because it has assertions about having a tree.
+  // We can't use the command because it has assertions about having a tree.
   aViewWrapper._viewFlags |= Ci.nsMsgViewFlagsType.kExpandAll;
 }
 
@@ -565,4 +482,53 @@ function make_person_with_word_in_name(aWord) {
 function make_person_with_word_in_address(aWord) {
   let dude = gMessageGenerator.makeNameAndAddress();
   return [dude[0], aWord + "@madeup.nul"];
+}
+
+class MockViewWrapperListener extends IDBViewWrapperListener {
+  shouldUseMailViews = true;
+  shouldDeferMessageDisplayUntilAfterServerConnect = false;
+  messenger = null;
+  // Use no message window!
+  msgWindow = null;
+  threadPaneCommandUpdater = gFakeCommandUpdater;
+  // Event handlers.
+  allMessagesLoadedEventCount = 0;
+  messagesRemovedEventCount = 0;
+
+  constructor() {
+    super();
+    this._promise = new Promise(resolve => {
+      this._resolve = resolve;
+    });
+  }
+
+  shouldMarkMessagesReadOnLeavingFolder(aMsgFolder) {
+    return Services.prefs.getBoolPref(
+      "mailnews.mark_message_read." + aMsgFolder.server.type
+    );
+  }
+
+  onMessagesLoaded(aAll) {
+    if (!aAll) {
+      return;
+    }
+    this.allMessagesLoadedEventCount++;
+    if (this.pendingLoad) {
+      this.pendingLoad = false;
+      this._resolve();
+    }
+  }
+
+  onMessagesRemoved() {
+    this.messagesRemovedEventCount++;
+  }
+
+  get promise() {
+    return this._promise;
+  }
+  resetPromise() {
+    this._promise = new Promise(resolve => {
+      this._resolve = resolve;
+    });
+  }
 }

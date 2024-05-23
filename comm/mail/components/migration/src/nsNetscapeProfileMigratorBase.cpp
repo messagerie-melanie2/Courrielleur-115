@@ -1,40 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is The Browser Profile Migrator.
- *
- * The Initial Developer of the Original Code is Ben Goodger.
- * Portions created by the Initial Developer are Copyright (C) 2004
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Ben Goodger <ben@bengoodger.com>
- *  Scott MacGregor <mscott@mozilla.org>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsIFile.h"
@@ -43,68 +10,62 @@
 #include "nsIPrefBranch.h"
 #include "nsIPrefLocalizedString.h"
 #include "nsIPrefService.h"
-#include "nsIRDFService.h"
 #include "nsIServiceManager.h"
-#include "nsIMutableArray.h"
-#include "nsISupportsPrimitives.h"
 #include "nsIURL.h"
 #include "nsNetscapeProfileMigratorBase.h"
 #include "nsNetUtil.h"
 #include "prtime.h"
 #include "prprf.h"
+#include "nsITimer.h"
 #include "nsINIParser.h"
 #include "nsMailProfileMigratorUtils.h"
+#include "nsIDirectoryEnumerator.h"
+#include "nsServiceManagerUtils.h"
 
-#define MIGRATION_BUNDLE "chrome://messenger/locale/migration/migration.properties"
+#define MIGRATION_BUNDLE \
+  "chrome://messenger/locale/migration/migration.properties"
 
-#define FILE_NAME_PREFS_5X NS_LITERAL_STRING("prefs.js")
+#define FILE_NAME_PREFS_5X u"prefs.js"_ns
 
 ///////////////////////////////////////////////////////////////////////////////
 // nsNetscapeProfileMigratorBase
-nsNetscapeProfileMigratorBase::nsNetscapeProfileMigratorBase()
-{
+nsNetscapeProfileMigratorBase::nsNetscapeProfileMigratorBase() {
   mObserverService = do_GetService("@mozilla.org/observer-service;1");
-  mMaxProgress = LL_ZERO;
-  mCurrentProgress = LL_ZERO;
+  mMaxProgress = 0;
+  mCurrentProgress = 0;
   mFileCopyTransactionIndex = 0;
 }
 
-NS_IMPL_ISUPPORTS2(nsNetscapeProfileMigratorBase, nsIMailProfileMigrator,
-                   nsITimerCallback)
+NS_IMPL_ISUPPORTS(nsNetscapeProfileMigratorBase, nsIMailProfileMigrator,
+                  nsITimerCallback)
 
-nsresult
-nsNetscapeProfileMigratorBase::GetProfileDataFromProfilesIni(nsILocalFile* aDataDir,
-                                                             nsIMutableArray* aProfileNames,
-                                                             nsIMutableArray* aProfileLocations)
-{
-  nsCOMPtr<nsIFile> dataDir;
-  nsresult rv = aDataDir->Clone(getter_AddRefs(dataDir));
+nsresult nsNetscapeProfileMigratorBase::GetProfileDataFromProfilesIni(
+    nsIFile* aDataDir, nsTArray<nsString>& aProfileNames,
+    nsTArray<RefPtr<nsIFile>>& aProfileLocations) {
+  nsCOMPtr<nsIFile> profileIni;
+  nsresult rv = aDataDir->Clone(getter_AddRefs(profileIni));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsILocalFile> profileIni(do_QueryInterface(dataDir, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  profileIni->Append(NS_LITERAL_STRING("profiles.ini"));
+  profileIni->Append(u"profiles.ini"_ns);
 
   // Does it exist?
   bool profileFileExists = false;
   rv = profileIni->Exists(&profileFileExists);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!profileFileExists)
-    return NS_ERROR_FILE_NOT_FOUND;
+  if (!profileFileExists) return NS_ERROR_FILE_NOT_FOUND;
 
   nsINIParser parser;
   rv = parser.Init(profileIni);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCAutoString buffer, filePath;
+  nsAutoCString buffer, filePath;
   bool isRelative;
 
   // This is an infinite loop that is broken when we no longer find profiles
   // for profileID with IsRelative option.
   for (unsigned int c = 0; true; ++c) {
-    nsCAutoString profileID("Profile");
+    nsAutoCString profileID("Profile");
     profileID.AppendInt(c);
 
     if (NS_FAILED(parser.GetString(profileID.get(), "IsRelative", buffer)))
@@ -124,117 +85,102 @@ nsNetscapeProfileMigratorBase::GetProfileDataFromProfilesIni(nsILocalFile* aData
       continue;
     }
 
-    nsCOMPtr<nsILocalFile> rootDir;
+    nsCOMPtr<nsIFile> rootDir;
     rv = NS_NewNativeLocalFile(EmptyCString(), true, getter_AddRefs(rootDir));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = isRelative ? rootDir->SetRelativeDescriptor(aDataDir, filePath) :
-                      rootDir->SetPersistentDescriptor(filePath);
-    if (NS_FAILED(rv))
-      continue;
+    rv = isRelative ? rootDir->SetRelativeDescriptor(aDataDir, filePath)
+                    : rootDir->SetPersistentDescriptor(filePath);
+    if (NS_FAILED(rv)) continue;
 
     bool exists = false;
     rootDir->Exists(&exists);
 
     if (exists) {
-      aProfileLocations->AppendElement(rootDir, false);
-
-      nsCOMPtr<nsISupportsString> profileNameString(
-        do_CreateInstance("@mozilla.org/supports-string;1"));
-
-      profileNameString->SetData(NS_ConvertUTF8toUTF16(buffer));
-      aProfileNames->AppendElement(profileNameString, false);
+      aProfileLocations.AppendElement(rootDir);
+      aProfileNames.AppendElement(NS_ConvertUTF8toUTF16(buffer));
     }
   }
   return NS_OK;
 }
 
-#define GETPREF(xform, method, value) \
+#define GETPREF(xform, method, value)                          \
   nsresult rv = aBranch->method(xform->sourcePrefName, value); \
-  if (NS_SUCCEEDED(rv)) \
-    xform->prefHasValue = true; \
+  if (NS_SUCCEEDED(rv)) xform->prefHasValue = true;            \
   return rv;
 
-#define SETPREF(xform, method, value) \
-  if (xform->prefHasValue) { \
-    return aBranch->method(xform->targetPrefName ? xform->targetPrefName : xform->sourcePrefName, value); \
-  } \
+#define SETPREF(xform, method, value)                                          \
+  if (xform->prefHasValue) {                                                   \
+    return aBranch->method(                                                    \
+        xform->targetPrefName ? xform->targetPrefName : xform->sourcePrefName, \
+        value);                                                                \
+  }                                                                            \
   return NS_OK;
 
-nsresult
-nsNetscapeProfileMigratorBase::GetString(PrefTransform* aTransform,
-                                         nsIPrefBranch* aBranch)
-{
+nsresult nsNetscapeProfileMigratorBase::GetString(PrefTransform* aTransform,
+                                                  nsIPrefBranch* aBranch) {
   PrefTransform* xform = (PrefTransform*)aTransform;
-  GETPREF(xform, GetCharPref, &xform->stringValue);
+  nsCString str;
+  nsresult rv = aBranch->GetCharPref(xform->sourcePrefName, str);
+  if (NS_SUCCEEDED(rv)) {
+    xform->prefHasValue = true;
+    xform->stringValue = moz_xstrdup(str.get());
+  }
+  return rv;
 }
 
-nsresult
-nsNetscapeProfileMigratorBase::SetString(PrefTransform* aTransform,
-                                         nsIPrefBranch* aBranch)
-{
+nsresult nsNetscapeProfileMigratorBase::SetString(PrefTransform* aTransform,
+                                                  nsIPrefBranch* aBranch) {
   PrefTransform* xform = (PrefTransform*)aTransform;
-  SETPREF(xform, SetCharPref, xform->stringValue);
+  SETPREF(xform, SetCharPref, nsDependentCString(xform->stringValue));
 }
 
-nsresult
-nsNetscapeProfileMigratorBase::GetBool(PrefTransform* aTransform,
-                                       nsIPrefBranch* aBranch)
-{
+nsresult nsNetscapeProfileMigratorBase::GetBool(PrefTransform* aTransform,
+                                                nsIPrefBranch* aBranch) {
   PrefTransform* xform = (PrefTransform*)aTransform;
   GETPREF(xform, GetBoolPref, &xform->boolValue);
 }
 
-nsresult
-nsNetscapeProfileMigratorBase::SetBool(PrefTransform* aTransform,
-                                       nsIPrefBranch* aBranch)
-{
+nsresult nsNetscapeProfileMigratorBase::SetBool(PrefTransform* aTransform,
+                                                nsIPrefBranch* aBranch) {
   PrefTransform* xform = (PrefTransform*)aTransform;
   SETPREF(xform, SetBoolPref, xform->boolValue);
 }
 
-nsresult
-nsNetscapeProfileMigratorBase::GetInt(PrefTransform* aTransform,
-                                      nsIPrefBranch* aBranch)
-{
+nsresult nsNetscapeProfileMigratorBase::GetInt(PrefTransform* aTransform,
+                                               nsIPrefBranch* aBranch) {
   PrefTransform* xform = (PrefTransform*)aTransform;
   GETPREF(xform, GetIntPref, &xform->intValue);
 }
 
-nsresult
-nsNetscapeProfileMigratorBase::SetInt(PrefTransform* aTransform,
-                                      nsIPrefBranch* aBranch)
-{
+nsresult nsNetscapeProfileMigratorBase::SetInt(PrefTransform* aTransform,
+                                               nsIPrefBranch* aBranch) {
   PrefTransform* xform = (PrefTransform*)aTransform;
   SETPREF(xform, SetIntPref, xform->intValue);
 }
 
-nsresult
-nsNetscapeProfileMigratorBase::CopyFile(const nsAString& aSourceFileName, const nsAString& aTargetFileName)
-{
+nsresult nsNetscapeProfileMigratorBase::CopyFile(
+    const nsAString& aSourceFileName, const nsAString& aTargetFileName) {
   nsCOMPtr<nsIFile> sourceFile;
   mSourceProfile->Clone(getter_AddRefs(sourceFile));
 
   sourceFile->Append(aSourceFileName);
   bool exists = false;
   sourceFile->Exists(&exists);
-  if (!exists)
-    return NS_OK;
+  if (!exists) return NS_OK;
 
   nsCOMPtr<nsIFile> targetFile;
   mTargetProfile->Clone(getter_AddRefs(targetFile));
 
   targetFile->Append(aTargetFileName);
   targetFile->Exists(&exists);
-  if (exists)
-    targetFile->Remove(false);
+  if (exists) targetFile->Remove(false);
 
   return sourceFile->CopyTo(mTargetProfile, aTargetFileName);
 }
 
-nsresult
-nsNetscapeProfileMigratorBase::GetSignonFileName(bool aReplace, char** aFileName)
-{
+nsresult nsNetscapeProfileMigratorBase::GetSignonFileName(
+    bool aReplace, nsACString& aFileName) {
   nsresult rv;
   if (aReplace) {
     // Find out what the signons file was called, this is stored in a pref
@@ -245,58 +191,42 @@ nsNetscapeProfileMigratorBase::GetSignonFileName(bool aReplace, char** aFileName
     nsCOMPtr<nsIFile> sourcePrefsName;
     mSourceProfile->Clone(getter_AddRefs(sourcePrefsName));
     sourcePrefsName->Append(FILE_NAME_PREFS_5X);
-    psvc->ReadUserPrefs(sourcePrefsName);
+    psvc->ReadUserPrefsFromFile(sourcePrefsName);
 
     nsCOMPtr<nsIPrefBranch> branch(do_QueryInterface(psvc));
     rv = branch->GetCharPref("signon.SignonFileName", aFileName);
-  }
-  else
+  } else
     rv = LocateSignonsFile(aFileName);
   return rv;
 }
 
-nsresult
-nsNetscapeProfileMigratorBase::LocateSignonsFile(char** aResult)
-{
-  nsCOMPtr<nsISimpleEnumerator> entries;
+nsresult nsNetscapeProfileMigratorBase::LocateSignonsFile(nsACString& aResult) {
+  nsCOMPtr<nsIDirectoryEnumerator> entries;
   nsresult rv = mSourceProfile->GetDirectoryEntries(getter_AddRefs(entries));
   if (NS_FAILED(rv)) return rv;
 
-  nsCAutoString fileName;
-  do {
-    bool hasMore = false;
-    rv = entries->HasMoreElements(&hasMore);
-    if (NS_FAILED(rv) || !hasMore) break;
-
-    nsCOMPtr<nsISupports> supp;
-    rv = entries->GetNext(getter_AddRefs(supp));
+  nsAutoCString fileName;
+  bool hasMore = false;
+  while (NS_SUCCEEDED(entries->HasMoreElements(&hasMore)) && hasMore) {
+    nsCOMPtr<nsIFile> currFile;
+    rv = entries->GetNextFile(getter_AddRefs(currFile));
     if (NS_FAILED(rv)) break;
-
-    nsCOMPtr<nsIFile> currFile(do_QueryInterface(supp));
 
     nsCOMPtr<nsIURI> uri;
     rv = NS_NewFileURI(getter_AddRefs(uri), currFile);
     if (NS_FAILED(rv)) break;
     nsCOMPtr<nsIURL> url(do_QueryInterface(uri));
 
-    nsCAutoString extn;
+    nsAutoCString extn;
     url->GetFileExtension(extn);
 
-#ifdef MOZILLA_INTERNAL_API
     if (extn.EqualsIgnoreCase("s")) {
       url->GetFileName(fileName);
       break;
     }
-#else
-    if (extn.Equals("s", CaseInsensitiveCompare)) {
-      url->GetFileName(fileName);
-      break;
-    }
-#endif
   }
-  while (1);
 
-  *aResult = ToNewCString(fileName);
+  aResult = fileName;
 
   return NS_OK;
 }
@@ -304,8 +234,8 @@ nsNetscapeProfileMigratorBase::LocateSignonsFile(char** aResult)
 // helper function, copies the contents of srcDir into destDir.
 // destDir will be created if it doesn't exist.
 
-nsresult nsNetscapeProfileMigratorBase::RecursiveCopy(nsIFile* srcDir, nsIFile* destDir)
-{
+nsresult nsNetscapeProfileMigratorBase::RecursiveCopy(nsIFile* srcDir,
+                                                      nsIFile* destDir) {
   nsresult rv;
   bool isDir;
 
@@ -319,44 +249,35 @@ nsresult nsNetscapeProfileMigratorBase::RecursiveCopy(nsIFile* srcDir, nsIFile* 
     rv = destDir->Create(nsIFile::DIRECTORY_TYPE, 0775);
   if (NS_FAILED(rv)) return rv;
 
-  bool hasMore = false;
-  nsCOMPtr<nsISimpleEnumerator> dirIterator;
+  nsCOMPtr<nsIDirectoryEnumerator> dirIterator;
   rv = srcDir->GetDirectoryEntries(getter_AddRefs(dirIterator));
   if (NS_FAILED(rv)) return rv;
 
-  rv = dirIterator->HasMoreElements(&hasMore);
-  if (NS_FAILED(rv)) return rv;
-
-  nsCOMPtr<nsIFile> dirEntry;
-
-  while (hasMore)
-  {
-    rv = dirIterator->GetNext((nsISupports**)getter_AddRefs(dirEntry));
-    if (NS_SUCCEEDED(rv))
-    {
+  bool hasMore = false;
+  while (NS_SUCCEEDED(dirIterator->HasMoreElements(&hasMore)) && hasMore) {
+    nsCOMPtr<nsIFile> dirEntry;
+    rv = dirIterator->GetNextFile(getter_AddRefs(dirEntry));
+    if (NS_SUCCEEDED(rv) && dirEntry) {
       rv = dirEntry->IsDirectory(&isDir);
-      if (NS_SUCCEEDED(rv))
-      {
-        if (isDir)
-        {
-          nsCOMPtr<nsIFile> destClone;
-          rv = destDir->Clone(getter_AddRefs(destClone));
-          if (NS_SUCCEEDED(rv))
-          {
-            nsCOMPtr<nsILocalFile> newChild(do_QueryInterface(destClone));
+      if (NS_SUCCEEDED(rv)) {
+        if (isDir) {
+          nsCOMPtr<nsIFile> newChild;
+          rv = destDir->Clone(getter_AddRefs(newChild));
+          if (NS_SUCCEEDED(rv)) {
             nsAutoString leafName;
             dirEntry->GetLeafName(leafName);
             newChild->AppendRelativePath(leafName);
             rv = newChild->Exists(&exists);
-            if (NS_SUCCEEDED(rv) && !exists)
+            if (NS_SUCCEEDED(rv) && !exists) {
               rv = newChild->Create(nsIFile::DIRECTORY_TYPE, 0775);
+              if (NS_FAILED(rv)) return rv;
+            }
             rv = RecursiveCopy(dirEntry, newChild);
           }
-        }
-        else
-        {
-          // we aren't going to do any actual file copying here. Instead, add this to our
-          // file transaction list so we can copy files asynchronously...
+        } else {
+          // we aren't going to do any actual file copying here. Instead, add
+          // this to our file transaction list so we can copy files
+          // asynchronously...
           fileTransactionEntry fileEntry;
           fileEntry.srcFile = dirEntry;
           fileEntry.destFile = destDir;
@@ -365,8 +286,6 @@ nsresult nsNetscapeProfileMigratorBase::RecursiveCopy(nsIFile* srcDir, nsIFile* 
         }
       }
     }
-    rv = dirIterator->HasMoreElements(&hasMore);
-    if (NS_FAILED(rv)) return rv;
   }
 
   return rv;
@@ -376,35 +295,32 @@ nsresult nsNetscapeProfileMigratorBase::RecursiveCopy(nsIFile* srcDir, nsIFile* 
 // nsITimerCallback
 
 NS_IMETHODIMP
-nsNetscapeProfileMigratorBase::Notify(nsITimer *timer)
-{
+nsNetscapeProfileMigratorBase::Notify(nsITimer* timer) {
   CopyNextFolder();
   return NS_OK;
 }
 
-void nsNetscapeProfileMigratorBase::CopyNextFolder()
-{
-  if (mFileCopyTransactionIndex < mFileCopyTransactions.Length())
-  {
-    PRUint32 percentage = 0;
+NS_IMETHODIMP
+nsNetscapeProfileMigratorBase::GetName(nsACString& aName) {
+  aName.AssignLiteral("nsNetscapeProfileMigratorBase");
+  return NS_OK;
+}
+
+void nsNetscapeProfileMigratorBase::CopyNextFolder() {
+  if (mFileCopyTransactionIndex < mFileCopyTransactions.Length()) {
     fileTransactionEntry fileTransaction =
-      mFileCopyTransactions.ElementAt(mFileCopyTransactionIndex++);
+        mFileCopyTransactions.ElementAt(mFileCopyTransactionIndex++);
 
     // copy the file
     fileTransaction.srcFile->CopyTo(fileTransaction.destFile,
                                     fileTransaction.newName);
 
     // add to our current progress
-    PRInt64 fileSize;
+    int64_t fileSize;
     fileTransaction.srcFile->GetFileSize(&fileSize);
-    LL_ADD(mCurrentProgress, mCurrentProgress, fileSize);
+    mCurrentProgress += fileSize;
 
-    PRInt64 percentDone;
-    LL_MUL(percentDone, mCurrentProgress, 100);
-
-    LL_DIV(percentDone, percentDone, mMaxProgress);
-
-    LL_L2UI(percentage, percentDone);
+    uint32_t percentage = (uint32_t)(mCurrentProgress * 100 / mMaxProgress);
 
     nsAutoString index;
     index.AppendInt(percentage);
@@ -412,18 +328,19 @@ void nsNetscapeProfileMigratorBase::CopyNextFolder()
     NOTIFY_OBSERVERS(MIGRATION_PROGRESS, index.get());
 
     // fire a timer to handle the next one.
-    mFileIOTimer = do_CreateInstance("@mozilla.org/timer;1");
-
-    if (mFileIOTimer)
-      mFileIOTimer->InitWithCallback(static_cast<nsITimerCallback *>(this), percentage == 100 ? 500 : 0, nsITimer::TYPE_ONE_SHOT);
+    nsresult rv = NS_NewTimerWithCallback(
+        getter_AddRefs(mFileIOTimer), static_cast<nsITimerCallback*>(this),
+        percentage == 100 ? 500 : 0, nsITimer::TYPE_ONE_SHOT, nullptr);
+    if (NS_FAILED(rv)) {
+      NS_WARNING("Could not start mFileIOTimer timer");
+    }
   } else
     EndCopyFolders();
 
   return;
 }
 
-void nsNetscapeProfileMigratorBase::EndCopyFolders()
-{
+void nsNetscapeProfileMigratorBase::EndCopyFolders() {
   mFileCopyTransactions.Clear();
   mFileCopyTransactionIndex = 0;
 
@@ -432,39 +349,23 @@ void nsNetscapeProfileMigratorBase::EndCopyFolders()
   index.AppendInt(nsIMailProfileMigrator::MAILDATA);
   NOTIFY_OBSERVERS(MIGRATION_ITEMAFTERMIGRATE, index.get());
 
-  NOTIFY_OBSERVERS(MIGRATION_ENDED, nsnull);
+  NOTIFY_OBSERVERS(MIGRATION_ENDED, nullptr);
 }
 
 NS_IMETHODIMP
-nsNetscapeProfileMigratorBase::GetSourceHasMultipleProfiles(bool* aResult)
-{
-  nsCOMPtr<nsIArray> profiles;
-  GetSourceProfiles(getter_AddRefs(profiles));
+nsNetscapeProfileMigratorBase::GetSourceHasMultipleProfiles(bool* aResult) {
+  nsTArray<nsString> profiles;
+  GetSourceProfiles(profiles);
 
-  if (profiles) {
-    PRUint32 count;
-    profiles->GetLength(&count);
-    *aResult = count > 1;
-  }
-  else
-    *aResult = false;
-
+  *aResult = profiles.Length() > 1;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsNetscapeProfileMigratorBase::GetSourceExists(bool* aResult)
-{
-  nsCOMPtr<nsIArray> profiles;
-  GetSourceProfiles(getter_AddRefs(profiles));
+nsNetscapeProfileMigratorBase::GetSourceExists(bool* aResult) {
+  nsTArray<nsString> profiles;
+  GetSourceProfiles(profiles);
 
-  if (profiles) {
-    PRUint32 count;
-    profiles->GetLength(&count);
-    *aResult = count > 0;
-  }
-  else
-    *aResult = false;
-
+  *aResult = profiles.Length() > 0;
   return NS_OK;
 }

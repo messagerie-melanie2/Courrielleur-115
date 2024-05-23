@@ -1,39 +1,8 @@
-/* ***** BEGIN LICENSE BLOCK *****
- *   Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * the Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Jonathan Protzenko <jonathan.protzenko@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* globals openAccountSetupTabWithAccount, openAccountProvisionerTab */
 
 /**
  * This object takes care of intercepting page loads and creating the
@@ -41,27 +10,11 @@
  * one of our account providers.
  */
 
-let Cu = Components.utils;
-let Cc = Components.classes;
-let Ci = Components.interfaces;
-let Cr = Components.results;
-
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/NetUtil.jsm");
-
-// Why don't people use JSMs? Sigh...
-let accountCreationFuncs = {};
-Services.scriptloader.loadSubScript("chrome://messenger/content/accountcreation/util.js", accountCreationFuncs);
-Services.scriptloader.loadSubScript("chrome://messenger/content/accountcreation/accountConfig.js", accountCreationFuncs);
-Services.scriptloader.loadSubScript("chrome://messenger/content/accountcreation/emailWizard.js", accountCreationFuncs);
-Services.scriptloader.loadSubScript("chrome://messenger/content/accountcreation/sanitizeDatatypes.js", accountCreationFuncs);
-Services.scriptloader.loadSubScript("chrome://messenger/content/accountcreation/fetchhttp.js", accountCreationFuncs);
-Services.scriptloader.loadSubScript("chrome://messenger/content/accountcreation/readFromXML.js", accountCreationFuncs);
-Services.scriptloader.loadSubScript("chrome://messenger/content/accountcreation/verifyConfig.js", accountCreationFuncs);
-Services.scriptloader.loadSubScript("chrome://messenger/content/accountcreation/fetchConfig.js", accountCreationFuncs);
-Services.scriptloader.loadSubScript("chrome://messenger/content/accountcreation/createInBackend.js", accountCreationFuncs);
-Services.scriptloader.loadSubScript("chrome://messenger/content/accountcreation/MyBadCertHandler.js", accountCreationFuncs);
+var { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
+);
+var { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+var { JXON } = ChromeUtils.import("resource:///modules/JXON.jsm");
 
 /**
  * This is an observer that watches all HTTP requests for one where the
@@ -84,31 +37,51 @@ function httpRequestObserver(aBrowser, aParams) {
 }
 
 httpRequestObserver.prototype = {
-  observe: function(aSubject, aTopic, aData) {
-    if (aTopic != "http-on-examine-response")
+  observe(aSubject, aTopic, aData) {
+    if (
+      aTopic != "http-on-examine-response" &&
+      aTopic != "http-on-examine-cached-response"
+    ) {
       return;
+    }
 
     if (!(aSubject instanceof Ci.nsIHttpChannel)) {
-      Component.utils.reportError("Failed to get a nsIHttpChannel when "
-                                  + "observing http-on-examine-response");
+      console.error(
+        "Failed to get a nsIHttpChannel when " +
+          "observing http-on-examine-response"
+      );
+      return;
+    }
+    // Helper function to get header values.
+    let getHttpHeader = (httpChannel, header) => {
+      // getResponseHeader throws when header is not set.
+      try {
+        return httpChannel.getResponseHeader(header);
+      } catch (e) {
+        return null;
+      }
+    };
+
+    let contentType = getHttpHeader(aSubject, "Content-Type");
+    if (!contentType || !contentType.toLowerCase().startsWith("text/xml")) {
       return;
     }
 
-    let contentType = "";
-    try {
-      contentType = aSubject.getResponseHeader("Content-Type");
-    } catch(e) {
-      // If we couldn't get the response header, which can happen,
-      // just swallow the exception and return.
-      return;
+    // It's possible the account information changed during the setup at the
+    // provider. Check some headers and set them if needed.
+    let name = getHttpHeader(aSubject, "x-thunderbird-account-name");
+    if (name) {
+      this.params.realName = name;
     }
-
-    if (contentType.toLowerCase().indexOf("text/xml") != 0)
-      return;
+    let email = getHttpHeader(aSubject, "x-thunderbird-account-email");
+    if (email) {
+      this.params.email = email;
+    }
 
     let requestWindow = this._getWindowForRequest(aSubject);
-    if (!requestWindow || (requestWindow !== this.browser.contentWindow))
+    if (!requestWindow || requestWindow !== this.browser.innerWindowID) {
       return;
+    }
 
     // Ok, we've got a request that looks like a decent candidate.
     // Let's attach our TracingListener.
@@ -126,29 +99,33 @@ httpRequestObserver.prototype = {
    *
    * @param aRequest the nsIRequest to analyze
    */
-  _getWindowForRequest: function(aRequest) {
+  _getWindowForRequest(aRequest) {
     try {
       if (aRequest && aRequest.notificationCallbacks) {
-        return aRequest.notificationCallbacks
-                       .getInterface(Ci.nsILoadContext)
-                       .associatedWindow;
+        return aRequest.notificationCallbacks.getInterface(Ci.nsILoadContext)
+          .currentWindowContext.innerWindowId;
       }
-      if (aRequest && aRequest.loadGroup
-          && aRequest.loadGroup.notificationCallbacks) {
-        return aRequest.loadGroup
-                       .notificationCallbacks
-                       .getInterface(Ci.nsILoadContext)
-                       .associatedWindow;
+      if (
+        aRequest &&
+        aRequest.loadGroup &&
+        aRequest.loadGroup.notificationCallbacks
+      ) {
+        return aRequest.loadGroup.notificationCallbacks.getInterface(
+          Ci.nsILoadContext
+        ).currentWindowContext.innerWindowId;
       }
-    } catch(e) {
-      Components.utils.reportError("Could not find an associated window "
-                                   + "for an HTTP request. Error: " + e);
+    } catch (e) {
+      console.error(
+        "Could not find an associated window " +
+          "for an HTTP request. Error: " +
+          e
+      );
     }
     return null;
   },
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver]),
-}
+  QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
+};
 
 /**
  * TracingListener is an nsITracableChannel implementation that copies
@@ -171,70 +148,111 @@ function TracingListener(aBrowser, aParams) {
 }
 
 TracingListener.prototype = {
-
-  onStartRequest: function (/* nsIRequest */ aRequest,
-                            /* nsISupports */ aContext) {
-    this.oldListener.onStartRequest(aRequest, aContext);
+  onStartRequest(/* nsIRequest */ aRequest) {
+    this.oldListener.onStartRequest(aRequest);
   },
 
-  onStopRequest: function (/* nsIRequest */ aRequest,
-                           /* nsISupports */ aContext,
-                           /* int */ aStatusCode) {
+  onStopRequest(/* nsIRequest */ aRequest, /* int */ aStatusCode) {
+    const { CreateInBackend } = ChromeUtils.import(
+      "resource:///modules/accountcreation/CreateInBackend.jsm"
+    );
+    const { readFromXML } = ChromeUtils.import(
+      "resource:///modules/accountcreation/readFromXML.jsm"
+    );
+    const { AccountConfig } = ChromeUtils.import(
+      "resource:///modules/accountcreation/AccountConfig.jsm"
+    );
+
+    let newAccount;
     try {
-      // Attempt to construct the downloaded data into XML
-      let data = this.chunks.join("");
-      let xml = new XML(data);
+      // Construct the downloaded data (we'll assume UTF-8 bytes) into XML.
+      let xml = this.chunks.join("");
+      let bytes = new Uint8Array(xml.length);
+      for (let i = 0; i < xml.length; i++) {
+        bytes[i] = xml.charCodeAt(i);
+      }
+      xml = new TextDecoder().decode(bytes);
 
-      // Attempt to derive email account information
-      let accountConfig = accountCreationFuncs.readFromXML(xml);
-      accountCreationFuncs.replaceVariables(accountConfig,
+      // Attempt to derive email account information.
+      let domParser = new DOMParser();
+      let accountConfig = readFromXML(
+        JXON.build(domParser.parseFromString(xml, "text/xml"))
+      );
+      AccountConfig.replaceVariables(
+        accountConfig,
         this.params.realName,
-        this.params.email);
-      let account = accountCreationFuncs.createAccountInBackend(accountConfig);
+        this.params.email
+      );
 
-      // Switch to the mail tab
-      let tabmail = document.getElementById('tabmail');
-      tabmail.switchToTab(0);
+      let host = aRequest.getRequestHeader("Host");
+      let providerHostname = new URL("http://" + host).hostname;
+      // Collect telemetry on which provider the new address was purchased from.
+      Services.telemetry.keyedScalarAdd(
+        "tb.account.new_account_from_provisioner",
+        providerHostname,
+        1
+      );
 
+      // Create the new account in the back end.
+      newAccount = CreateInBackend.createAccountInBackend(accountConfig);
+
+      let tabmail = document.getElementById("tabmail");
       // Find the tab associated with this browser, and close it.
-      let myTabInfo = tabmail.tabInfo
-        .filter((function (x) {
-              return "browser" in x && x.browser == this.browser;
-              }).bind(this))[0];
+      let myTabInfo = tabmail.tabInfo.filter(
+        function (x) {
+          return "browser" in x && x.browser == this.browser;
+        }.bind(this)
+      )[0];
       tabmail.closeTab(myTabInfo);
 
-      // Respawn the account provisioner to announce our success
-      NewMailAccountProvisioner(null, {
-        success: true,
-        search_engine: this.params.searchEngine,
-        account: account,
-      });
+      // Trigger the first login to download the folder structure and messages.
+      newAccount.incomingServer.getNewMessages(
+        newAccount.incomingServer.rootFolder,
+        this._msgWindow,
+        null
+      );
     } catch (e) {
-      // Something went wrong.  Right now, we just dump the problem out
-      // to the Error Console.  We should really do something smarter and
-      // more user-facing, because if - for example - a provider passes
-      // some bogus XML, this routine silently fails.
-      Components.utils.reportError("Problem interpreting provider XML:" + e);
+      // Something went wrong with account set up. Dump the error out to the
+      // error console, reopen the account provisioner tab, and show an error
+      // dialog to the user.
+      console.error("Problem interpreting provider XML:" + e);
+      openAccountProvisionerTab();
+      Services.prompt.alert(window, null, e);
+
+      this.oldListener.onStopRequest(aRequest, aStatusCode);
+      return;
     }
 
-    this.oldListener.onStopRequest(aRequest, aContext, aStatusCode);
+    // Open the account setup tab and show the success view or an error if we
+    // weren't able to create the new account.
+    openAccountSetupTabWithAccount(
+      newAccount,
+      this.params.realName,
+      this.params.email
+    );
+
+    this.oldListener.onStopRequest(aRequest, aStatusCode);
   },
 
-  onDataAvailable: function (/* nsIRequest */ aRequest,
-                             /* nsISupports */ aContext,
-                             /* nsIInputStream */ aStream,
-                             /* int */ aOffset,
-                             /* int */ aCount) {
+  onDataAvailable(
+    /* nsIRequest */ aRequest,
+    /* nsIInputStream */ aStream,
+    /* int */ aOffset,
+    /* int */ aCount
+  ) {
     // We want to read the stream of incoming data, but we also want
     // to make sure it gets passed to the original listener. We do this
     // by passing the input stream through an nsIStorageStream, writing
     // the data to that stream, and passing it along to the next listener.
-    let binaryInputStream = Cc["@mozilla.org/binaryinputstream;1"]
-                           .createInstance(Ci.nsIBinaryInputStream);
-    let storageStream = Cc["@mozilla.org/storagestream;1"]
-                        .createInstance(Ci.nsIStorageStream);
-    let outStream = Cc["@mozilla.org/binaryoutputstream;1"]
-                    .createInstance(Ci.nsIBinaryOutputStream);
+    let binaryInputStream = Cc[
+      "@mozilla.org/binaryinputstream;1"
+    ].createInstance(Ci.nsIBinaryInputStream);
+    let storageStream = Cc["@mozilla.org/storagestream;1"].createInstance(
+      Ci.nsIStorageStream
+    );
+    let outStream = Cc["@mozilla.org/binaryoutputstream;1"].createInstance(
+      Ci.nsIBinaryOutputStream
+    );
 
     binaryInputStream.setInputStream(aStream);
 
@@ -248,12 +266,16 @@ TracingListener.prototype = {
     this.chunks.push(data);
 
     outStream.writeBytes(data, aCount);
-    this.oldListener.onDataAvailable(aRequest, aContext,
-                                     storageStream.newInputStream(0),
-                                     aOffset, aCount);
+    this.oldListener.onDataAvailable(
+      aRequest,
+      storageStream.newInputStream(0),
+      aOffset,
+      aCount
+    );
   },
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIStreamListener,
-                                         Ci.nsIRequestObserver])
-
-}
+  QueryInterface: ChromeUtils.generateQI([
+    "nsIStreamListener",
+    "nsIRequestObserver",
+  ]),
+};

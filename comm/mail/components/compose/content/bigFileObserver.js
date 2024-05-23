@@ -1,153 +1,137 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
-  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-Components.utils.import("resource://gre/modules/Services.jsm");
-Components.utils.import("resource:///modules/cloudFileAccounts.js");
+/* global MozElements */
 
-const kUploadNotificationValue = "bigAttachmentUploading";
+/* import-globals-from MsgComposeCommands.js */
+
+var { cloudFileAccounts } = ChromeUtils.import(
+  "resource:///modules/cloudFileAccounts.jsm"
+);
+
+var kUploadNotificationValue = "bigAttachmentUploading";
+var kPrivacyWarningNotificationValue = "bigAttachmentPrivacyWarning";
 
 var gBigFileObserver = {
   bigFiles: [],
   sessionHidden: false,
+  privacyWarned: false,
 
   get hidden() {
-    return this.sessionHidden ||
-           !Services.prefs.getBoolPref("mail.cloud_files.enabled") ||
-           !Services.prefs.getBoolPref("mail.compose.big_attachments.notify") ||
-           Services.io.offline;
+    return (
+      this.sessionHidden ||
+      !Services.prefs.getBoolPref("mail.cloud_files.enabled") ||
+      !Services.prefs.getBoolPref("mail.compose.big_attachments.notify") ||
+      Services.io.offline
+    );
   },
 
-  hide: function(aPermanent) {
-    if (aPermanent)
+  hide(aPermanent) {
+    if (aPermanent) {
       Services.prefs.setBoolPref("mail.compose.big_attachments.notify", false);
-    else
+    } else {
       this.sessionHidden = true;
+    }
   },
 
-  init: function() {
+  init() {
     let bucket = document.getElementById("attachmentBucket");
-    bucket.addEventListener("attachments-added", this, false);
-    bucket.addEventListener("attachments-removed", this, false);
-    bucket.addEventListener("attachments-uploading", this, false);
-    bucket.addEventListener("attachment-uploaded", this, false);
-    bucket.addEventListener("attachment-upload-failed", this, false);
-    bucket.addEventListener("attachments-converted", this, false);
+    bucket.addEventListener("attachments-added", this);
+    bucket.addEventListener("attachments-removed", this);
+    bucket.addEventListener("attachment-converted-to-regular", this);
+    bucket.addEventListener("attachment-uploading", this);
+    bucket.addEventListener("attachment-uploaded", this);
+    bucket.addEventListener("attachment-upload-failed", this);
 
     this.sessionHidden = false;
+    this.privacyWarned = false;
     this.bigFiles = [];
   },
 
-  uninit: function() {
-    let bucket = document.getElementById("attachmentBucket");
-    bucket.removeEventListener("attachments-added", this, false);
-    bucket.removeEventListener("attachments-removed", this, false);
-    bucket.removeEventListener("attachments-uploading", this, false);
-    bucket.removeEventListener("attachment-uploaded", this, false);
-    bucket.removeEventListener("attachment-upload-failed", this, false);
-    bucket.removeEventListener("attachments-converted", this, false);
-
-    let nb = document.getElementById("attachmentNotificationBox");
-    let notification = nb.getNotificationWithValue(kUploadNotificationValue);
-    if (notification)
-      nb.removeNotification(notification);
-  },
-
-  handleEvent: function(event) {
-    if (this.hidden)
+  handleEvent(event) {
+    if (this.hidden) {
       return;
-
-    const bucketCallbacks = {
-      "attachments-added": this.attachmentsAdded,
-      "attachments-removed": this.attachmentsRemoved,
-      "attachments-converted": this.attachmentsConverted,
-      "attachments-uploading": this.attachmentsUploading,
-    };
-
-    const itemCallbacks = {
-      "attachment-uploaded": this.attachmentUploaded,
-      "attachment-upload-failed": this.attachmentUploadFailed,
     }
 
-    if (event.type in bucketCallbacks)
-      bucketCallbacks[event.type].call(this, event.detail);
+    switch (event.type) {
+      case "attachments-added":
+        this.bigFileTrackerAdd(event.detail);
+        break;
+      case "attachments-removed":
+        this.bigFileTrackerRemove(event.detail);
+        this.checkAndHidePrivacyNotification();
+        break;
+      case "attachment-converted-to-regular":
+        this.checkAndHidePrivacyNotification();
+        break;
+      case "attachment-uploading":
+        // Remove the currently uploading item from bigFiles, to remove the big
+        // file notification already during upload.
+        this.bigFileTrackerRemove([event.detail]);
+        this.updateUploadingNotification();
+        break;
+      case "attachment-upload-failed":
+        this.updateUploadingNotification();
+        break;
+      case "attachment-uploaded":
+        this.updateUploadingNotification();
+        if (this.uploadsInProgress == 0) {
+          this.showPrivacyNotification();
+        }
+        break;
+      default:
+        // Do not update the notification for other events.
+        return;
+    }
 
-    if (event.type in itemCallbacks)
-      itemCallbacks[event.type].call(this, event.target, event.detail);
-
-    this.updateNotification();
+    this.updateBigFileNotification();
   },
 
-  formatString: function (key, replacements, plural) {
+  bigFileTrackerAdd(aAttachments) {
+    let threshold =
+      Services.prefs.getIntPref("mail.compose.big_attachments.threshold_kb") *
+      1024;
+
+    for (let attachment of aAttachments) {
+      if (attachment.size >= threshold && !attachment.sendViaCloud) {
+        this.bigFiles.push(attachment);
+      }
+    }
+  },
+
+  bigFileTrackerRemove(aAttachments) {
+    for (let attachment of aAttachments) {
+      let index = this.bigFiles.findIndex(e => e.url == attachment.url);
+      if (index != -1) {
+        this.bigFiles.splice(index, 1);
+      }
+    }
+  },
+
+  formatString(key, replacements, plural) {
     let str = getComposeBundle().getString(key);
-    if (plural !== undefined)
+    if (plural !== undefined) {
       str = PluralForm.get(plural, str);
+    }
     if (replacements !== undefined) {
-      for (let i = 0; i < replacements.length; i++)
+      for (let i = 0; i < replacements.length; i++) {
         str = str.replace("#" + (i + 1), replacements[i]);
+      }
     }
     return str;
   },
 
-  attachmentsAdded: function(aAttachments) {
-    let threshold = Services.prefs.getIntPref(
-                    "mail.compose.big_attachments.threshold_kb") * 1024;
-
-    for (let attachment in fixIterator(
-         aAttachments, Components.interfaces.nsIMsgAttachment)) {
-      if (attachment.size >= threshold && !attachment.sendViaCloud)
-        this.bigFiles.push(attachment);
-    }
-  },
-
-  attachmentsRemoved: function(aAttachments) {
-    for (let attachment in fixIterator(
-         aAttachments, Components.interfaces.nsIMsgAttachment)) {
-      let index = this.bigFiles.indexOf(attachment);
-      if (index != -1)
-        this.bigFiles.splice(index, 1);
-    }
-  },
-
-  attachmentsConverted: function(aAttachments) {
-    let uploaded = [];
-
-    for (let attachment in fixIterator(
-         aAttachments, Components.interfaces.nsIMsgAttachment)) {
-      if (attachment.sendViaCloud) {
-        this.attachmentsRemoved([attachment]);
-        uploaded.push(attachment);
-      }
-    }
-
-    if (uploaded.length)
-      this.showUploadingNotification(uploaded);
-  },
-
-  attachmentsUploading: function(aAttachments) {
-    this.showUploadingNotification(aAttachments);
-  },
-
-  attachmentUploaded: function(aAttachment) {
-    if (!this._anyUploadsInProgress())
-      this.hideUploadingNotification();
-  },
-
-  attachmentUploadFailed: function(aAttachment, aStatusCode) {
-    if (!this._anyUploadsInProgress())
-      this.hideUploadingNotification();
-  },
-
-  updateNotification: function() {
-    let nb = document.getElementById("attachmentNotificationBox");
-    let notification = nb.getNotificationWithValue("bigAttachment");
-    let numAccounts = cloudFileAccounts.accounts.length;
-
+  updateBigFileNotification() {
+    let bigFileNotification =
+      gComposeNotification.getNotificationWithValue("bigAttachment");
     if (this.bigFiles.length) {
-      if (notification) {
-        notification.label = this.formatString("bigFileDescription",
-                                               [this.bigFiles.length],
-                                               this.bigFiles.length);
+      if (bigFileNotification) {
+        bigFileNotification.label = this.formatString(
+          "bigFileDescription",
+          [this.bigFiles.length],
+          this.bigFiles.length
+        );
         return;
       }
 
@@ -157,136 +141,228 @@ var gBigFileObserver = {
           accessKey: getComposeBundle().getString("learnMore.accesskey"),
           callback: this.openLearnMore.bind(this),
         },
-        { label: this.formatString("bigFileShare.label",
-                                   []),
+        {
+          label: this.formatString("bigFileShare.label", []),
           accessKey: this.formatString("bigFileShare.accesskey"),
           callback: this.convertAttachments.bind(this),
         },
-
-        { label: this.formatString("bigFileAttach.label",
-                                   []),
+        {
+          label: this.formatString("bigFileAttach.label", []),
           accessKey: this.formatString("bigFileAttach.accesskey"),
-          callback: this.hideNotification.bind(this),
+          callback: this.hideBigFileNotification.bind(this),
         },
       ];
 
-      let msg = this.formatString("bigFileDescription", [this.bigFiles.length],
-                                  this.bigFiles.length);
+      let msg = this.formatString(
+        "bigFileDescription",
+        [this.bigFiles.length],
+        this.bigFiles.length
+      );
 
-      notification = nb.appendNotification(msg, "bigAttachment", "null",
-                                           nb.PRIORITY_WARNING_MEDIUM,
-                                           buttons);
-    }
-    else {
-      if (notification)
-        nb.removeNotification(notification);
+      bigFileNotification = gComposeNotification.appendNotification(
+        "bigAttachment",
+        {
+          label: msg,
+          priority: gComposeNotification.PRIORITY_WARNING_MEDIUM,
+        },
+        buttons
+      );
+    } else if (bigFileNotification) {
+      gComposeNotification.removeNotification(bigFileNotification);
     }
   },
 
-  openLearnMore: function() {
+  openLearnMore() {
     let url = Services.prefs.getCharPref("mail.cloud_files.learn_more_url");
     openContentTab(url);
     return true;
   },
 
-  convertAttachments: function() {
-    let cloudProvider;
-    let accounts = cloudFileAccounts.accounts;
+  convertAttachments() {
+    let account;
+    let accounts = cloudFileAccounts.configuredAccounts;
 
     if (accounts.length == 1) {
-      cloudProvider = accounts[0];
-    }
-    else if(accounts.length > 1) {
-      let selection = {};
-      let names = [cloudFileAccounts.getDisplayName(i) for each (i in accounts)];
-      if (Services.prompt.select(window,
-                                 this.formatString("bigFileChooseAccount.title"),
-                                 this.formatString("bigFileChooseAccount.text"),
-                                 names.length, names, selection))
-        cloudProvider = accounts[selection.value];
-    }
-    else {
-      let accountKey = cloudFileAccounts.addAccountDialog();
-      if (accountKey)
-        cloudProvider = cloudFileAccounts.getAccount(accountKey);
-      else
-        return true;
-    }
+      account = accounts[0];
+    } else if (accounts.length > 1) {
+      // We once used Services.prompt.select for this UI, but it doesn't support displaying an
+      // icon for each item. The following code does the same thing with a replacement dialog.
+      let { PromptUtils } = ChromeUtils.importESModule(
+        "resource://gre/modules/PromptUtils.sys.mjs"
+      );
 
-    if (cloudProvider)
-      convertToCloudAttachment(this.bigFiles, cloudProvider);
-  },
+      let names = accounts.map(i => cloudFileAccounts.getDisplayName(i));
+      let icons = accounts.map(i => i.iconURL);
+      let args = {
+        promptType: "select",
+        title: this.formatString("bigFileChooseAccount.title"),
+        text: this.formatString("bigFileChooseAccount.text"),
+        list: names,
+        icons,
+        selected: -1,
+        ok: false,
+      };
 
-  hideNotification: function() {
-    let never = {};
-    if (Services.prompt.confirmCheck(window,
-                                     this.formatString("bigFileHideNotification.title"),
-                                     this.formatString("bigFileHideNotification.text"),
-                                     this.formatString("bigFileHideNotification.check"),
-                                     never))
-      this.hide(never.value);
-    else
+      let propBag = PromptUtils.objectToPropBag(args);
+      openDialog(
+        "chrome://messenger/content/cloudfile/selectDialog.xhtml",
+        "_blank",
+        "centerscreen,chrome,modal,titlebar",
+        propBag
+      );
+      PromptUtils.propBagToObject(propBag, args);
+
+      if (args.ok) {
+        account = accounts[args.selected];
+      }
+    } else {
+      openPreferencesTab("paneCompose", "compositionAttachmentsCategory");
       return true;
+    }
+
+    if (account) {
+      convertToCloudAttachment(this.bigFiles, account);
+    }
+
+    return false;
   },
 
-  showUploadingNotification: function(aAttachments) {
+  hideBigFileNotification() {
+    let never = {};
+    if (
+      Services.prompt.confirmCheck(
+        window,
+        this.formatString("bigFileHideNotification.title"),
+        this.formatString("bigFileHideNotification.text"),
+        this.formatString("bigFileHideNotification.check"),
+        never
+      )
+    ) {
+      this.hide(never.value);
+      return false;
+    }
+    return true;
+  },
+
+  updateUploadingNotification() {
     // We will show the uploading notification for a minimum of 2.5 seconds
     // seconds.
     const kThreshold = 2500; // milliseconds
 
-    if (!aAttachments.length ||
-        !Services.prefs
-                 .getBoolPref("mail.compose.big_attachments.insert_notification"))
+    if (
+      !Services.prefs.getBoolPref(
+        "mail.compose.big_attachments.insert_notification"
+      )
+    ) {
       return;
+    }
 
-    let nb = document.getElementById("attachmentNotificationBox");
-    let notification = nb.getNotificationWithValue(kUploadNotificationValue);
+    let activeUploads = this.uploadsInProgress;
+    let notification = gComposeNotification.getNotificationWithValue(
+      kUploadNotificationValue
+    );
 
-    if (notification)
+    if (activeUploads == 0) {
+      if (notification) {
+        // Check the timestamp that we stashed in the timeout field of the
+        // notification...
+        let now = Date.now();
+        if (now >= notification.timeout) {
+          gComposeNotification.removeNotification(notification);
+        } else {
+          setTimeout(function () {
+            gComposeNotification.removeNotification(notification);
+          }, notification.timeout - now);
+        }
+      }
       return;
+    }
 
     let message = this.formatString("cloudFileUploadingNotification");
-    message = PluralForm.get(aAttachments.length, message);
+    message = PluralForm.get(activeUploads, message);
 
-    notification = nb.appendNotification(message, kUploadNotificationValue,
-                                         "null", nb.PRIORITY_WARNING_MEDIUM,
-                                         null);
+    if (notification) {
+      notification.label = message;
+      return;
+    }
 
+    let showUploadButton = {
+      accessKey: this.formatString(
+        "stopShowingUploadingNotification.accesskey"
+      ),
+      label: this.formatString("stopShowingUploadingNotification.label"),
+      callback(aNotificationBar, aButton) {
+        Services.prefs.setBoolPref(
+          "mail.compose.big_attachments.insert_notification",
+          false
+        );
+      },
+    };
+    notification = gComposeNotification.appendNotification(
+      kUploadNotificationValue,
+      {
+        label: message,
+        priority: gComposeNotification.PRIORITY_WARNING_MEDIUM,
+      },
+      [showUploadButton]
+    );
     notification.timeout = Date.now() + kThreshold;
   },
 
-  hideUploadingNotification: function() {
-    let nb = document.getElementById("attachmentNotificationBox");
-    let notification = nb.getNotificationWithValue(kUploadNotificationValue);
+  hidePrivacyNotification() {
+    this.privacyWarned = false;
+    let notification = gComposeNotification.getNotificationWithValue(
+      kPrivacyWarningNotificationValue
+    );
 
     if (notification) {
-      // Check the timestamp that we stashed in the timeout field of the
-      // notification...
-      let now = Date.now();
-      if (now >= notification.timeout) {
-        nb.removeNotification(notification);
-      } else {
-        setTimeout(function() {
-          nb.removeNotification(notification);
-        }, notification.timeout - now);
-      }
+      gComposeNotification.removeNotification(notification);
     }
   },
 
-  _anyUploadsInProgress: function() {
-    let bucket = document.getElementById("attachmentBucket");
-    let rowCount = bucket.getRowCount();
-    for (let i = 0; i < bucket.getRowCount(); ++i) {
-      let item = bucket.getItemAtIndex(i);
-      if (item && item.uploading)
-        return true;
+  checkAndHidePrivacyNotification() {
+    if (
+      !gAttachmentBucket.itemChildren.find(
+        item => item.attachment && item.attachment.sendViaCloud
+      )
+    ) {
+      this.hidePrivacyNotification();
     }
-    return false;
   },
 
+  showPrivacyNotification() {
+    if (this.privacyWarned) {
+      return;
+    }
+    this.privacyWarned = true;
+
+    let notification = gComposeNotification.getNotificationWithValue(
+      kPrivacyWarningNotificationValue
+    );
+
+    if (notification) {
+      return;
+    }
+
+    let message = this.formatString("cloudFilePrivacyNotification");
+    gComposeNotification.appendNotification(
+      kPrivacyWarningNotificationValue,
+      {
+        label: message,
+        priority: gComposeNotification.PRIORITY_WARNING_MEDIUM,
+      },
+      null
+    );
+  },
+
+  get uploadsInProgress() {
+    let items = [...document.getElementById("attachmentBucket").itemChildren];
+    return items.filter(e => e.uploading).length;
+  },
 };
 
-document.documentElement.addEventListener("compose-window-init",
-  gBigFileObserver.init.bind(gBigFileObserver), false);
-document.documentElement.addEventListener("compose-window-close",
-  gBigFileObserver.uninit.bind(gBigFileObserver), false);
+window.addEventListener(
+  "compose-window-init",
+  gBigFileObserver.init.bind(gBigFileObserver),
+  true
+);

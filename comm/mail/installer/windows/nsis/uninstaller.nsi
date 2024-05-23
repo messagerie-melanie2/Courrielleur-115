@@ -1,43 +1,11 @@
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is the Mozilla Installer code.
-#
-# The Initial Developer of the Original Code is Mozilla Foundation
-# Portions created by the Initial Developer are Copyright (C) 2006
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#  Robert Strong <robert.bugzilla@gmail.com>
-#  Scott MacGregor <mscott@mozilla.org>
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or
-# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 # Required Plugins:
 # AppAssocReg http://nsis.sourceforge.net/Application_Association_Registration_plug-in
-# CityHash    http://mxr.mozilla.org/mozilla-central/source/other-licenses/nsis/Contrib/CityHash
+# BitsUtils   http://dxr.mozilla.org/mozilla-central/source/other-licenses/nsis/Contrib/BitsUtils
+# CityHash    http://dxr.mozilla.org/mozilla-central/source/other-licenses/nsis/Contrib/CityHash
 # ShellLink   http://nsis.sourceforge.net/ShellLink_plug-in
 # UAC         http://nsis.sourceforge.net/UAC_plug-in
 
@@ -52,16 +20,28 @@ CRCCheck on
 
 RequestExecutionLevel user
 
+Unicode true
+ManifestSupportedOS all
+ManifestDPIAware true
+
 !addplugindir ./
 
-; On Vista and above attempt to elevate Standard Users in addition to users that
+; Attempt to elevate Standard Users in addition to users that
 ; are a member of the Administrators group.
 !define NONADMIN_ELEVATE
 
 ; prevents compiling of the reg write logging.
 !define NO_LOG
 
+!define MaintUninstallKey \
+ "Software\Microsoft\Windows\CurrentVersion\Uninstall\MozillaMaintenanceService"
+
 Var TmpVal
+Var MaintCertKey
+; AddTaskbarSC is defined here in order to silence warnings from inside
+; MigrateTaskBarShortcut and is not intended to be used here.
+; See Bug 1329869 for more.
+Var AddTaskbarSC
 
 ; Other included files may depend upon these includes!
 ; The following includes are provided by NSIS.
@@ -73,10 +53,8 @@ Var TmpVal
 !include WordFunc.nsh
 
 !insertmacro GetSize
-!insertmacro GetOptions
-!insertmacro GetParameters
-!insertmacro GetParent
-!insertmacro WordFind
+!insertmacro StrFilter
+!insertmacro WordReplace
 
 !insertmacro un.GetParent
 
@@ -85,15 +63,11 @@ Var TmpVal
 !include defines.nsi
 !include common.nsh
 !include locales.nsi
-!include version.nsh
 
 ; This is named BrandShortName helper because we use this for software update
 ; post update cleanup.
-VIAddVersionKey "FileDescription"  "${BrandShortName} Helper"
+VIAddVersionKey "FileDescription" "${BrandShortName} Helper"
 VIAddVersionKey "OriginalFilename" "helper.exe"
-
-; Most commonly used macros for managing shortcuts
-!insertmacro _LoggingShortcutsCommon
 
 !insertmacro AddHandlerValues
 !insertmacro CleanVirtualStore
@@ -102,33 +76,44 @@ VIAddVersionKey "OriginalFilename" "helper.exe"
 !insertmacro GetPathFromString
 !insertmacro InitHashAppModelId
 !insertmacro IsHandlerForInstallDir
+!insertmacro IsPinnedToTaskBar
+!insertmacro IsUserAdmin
 !insertmacro LogDesktopShortcut
 !insertmacro LogQuickLaunchShortcut
 !insertmacro LogStartMenuShortcut
+!insertmacro PinnedToStartMenuLnkCount
+!insertmacro RegCleanAppHandler
 !insertmacro RegCleanMain
 !insertmacro RegCleanUninstall
+!insertmacro SetAppLSPCategories
 !insertmacro SetBrandNameVars
-!insertmacro UnloadUAC
 !insertmacro UpdateShortcutAppModelIDs
+!insertmacro UnloadUAC
 !insertmacro WriteRegDWORD2
 !insertmacro WriteRegStr2
 
+; This needs to be inserted after InitHashAppModelId because it uses
+; $AppUserModelID and the compiler can't handle using variables lexically before
+; they've been declared.
+!insertmacro GetInstallerRegistryPref
+
 !insertmacro un.ChangeMUIHeaderImage
 !insertmacro un.CheckForFilesInUse
-!insertmacro un.CleanUpdatesDir
+!insertmacro un.CleanMaintenanceServiceLogs
 !insertmacro un.CleanVirtualStore
 !insertmacro un.DeleteShortcuts
 !insertmacro un.GetLongPath
 !insertmacro un.GetSecondInstallPath
 !insertmacro un.InitHashAppModelId
 !insertmacro un.ManualCloseAppPrompt
-!insertmacro un.ParseUninstallLog
 !insertmacro un.RegCleanAppHandler
 !insertmacro un.RegCleanFileHandler
 !insertmacro un.RegCleanMain
-!insertmacro un.RegCleanProtocolHandler
 !insertmacro un.RegCleanUninstall
+!insertmacro un.RegCleanProtocolHandler
 !insertmacro un.RemoveQuotesFromPath
+!insertmacro un.RemovePrecompleteEntries
+!insertmacro un.SetAppLSPCategories
 !insertmacro un.SetBrandNameVars
 
 !include shared.nsh
@@ -142,7 +127,7 @@ VIAddVersionKey "OriginalFilename" "helper.exe"
 
 Name "${BrandFullName}"
 OutFile "helper.exe"
-!ifdef HAVE_64BIT_OS
+!ifdef HAVE_64BIT_BUILD
   InstallDir "$PROGRAMFILES64\${BrandFullName}\"
 !else
   InstallDir "$PROGRAMFILES32\${BrandFullName}\"
@@ -159,6 +144,11 @@ ShowUnInstDetails nevershow
 !define MUI_HEADERIMAGE
 !define MUI_HEADERIMAGE_RIGHT
 !define MUI_UNWELCOMEFINISHPAGE_BITMAP wizWatermark.bmp
+; By default MUI_BGCOLOR is hardcoded to FFFFFF, which is only correct if the
+; the Windows theme or high-contrast mode hasn't changed it, so we need to
+; override that with GetSysColor(COLOR_WINDOW) (this string ends up getting
+; passed to SetCtlColors, which uses this custom syntax to mean that).
+!define MUI_BGCOLOR SYSCLR:WINDOW
 
 ; Use a right to left header image when the language is right to left
 !ifdef ${AB_CD}_rtl
@@ -172,31 +162,86 @@ ShowUnInstDetails nevershow
  */
 ; Welcome Page
 !define MUI_PAGE_CUSTOMFUNCTION_PRE un.preWelcome
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW un.showWelcome
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE un.leaveWelcome
 !insertmacro MUI_UNPAGE_WELCOME
 
 ; Custom Uninstall Confirm Page
-UninstPage custom un.preConfirm un.leaveConfirm
+UninstPage custom un.preConfirm
 
 ; Remove Files Page
 !insertmacro MUI_UNPAGE_INSTFILES
 
 ; Finish Page
-
-; Don't setup the survey controls, functions, etc. when the application has
-; defined NO_UNINSTALL_SURVEY
-!ifndef NO_UNINSTALL_SURVEY
-!define MUI_PAGE_CUSTOMFUNCTION_PRE un.preFinish
-!define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
-!define MUI_FINISHPAGE_SHOWREADME ""
-!define MUI_FINISHPAGE_SHOWREADME_TEXT $(SURVEY_TEXT)
-!define MUI_FINISHPAGE_SHOWREADME_FUNCTION un.Survey
-!endif
-
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW un.showFinish
 !insertmacro MUI_UNPAGE_FINISH
 
 ; Use the default dialog for IDD_VERIFY for a simple Banner
 ChangeUI IDD_VERIFY "${NSISDIR}\Contrib\UIs\default.exe"
+
+################################################################################
+# Helper Functions
+
+; This function is used to uninstall the maintenance service if the
+; application currently being uninstalled is the last application to use the
+; maintenance service.
+Function un.UninstallServiceIfNotUsed
+  ; $0 will store if a subkey exists
+  ; $1 will store the first subkey if it exists or an empty string if it doesn't
+  ; Backup the old values
+  Push $0
+  Push $1
+
+  ; The maintenance service always uses the 64-bit registry on x64 systems
+  ${If} ${RunningX64}
+  ${OrIf} ${IsNativeARM64}
+    SetRegView 64
+  ${EndIf}
+
+  ; Figure out the number of subkeys
+  StrCpy $0 0
+  ${Do}
+    EnumRegKey $1 HKLM "Software\Mozilla\MaintenanceService" $0
+    ${If} "$1" == ""
+      ${ExitDo}
+    ${EndIf}
+    IntOp $0 $0 + 1
+  ${Loop}
+
+  ; Restore back the registry view
+  ${If} ${RunningX64}
+  ${OrIf} ${IsNativeARM64}
+    SetRegView lastUsed
+  ${EndIf}
+
+  ${If} $0 == 0
+    ; Get the path of the maintenance service uninstaller.
+    ; Look in both the 32-bit and 64-bit registry views.
+    SetRegView 32
+    ReadRegStr $1 HKLM ${MaintUninstallKey} "UninstallString"
+    SetRegView lastused
+
+    ${If} ${RunningX64}
+    ${OrIf} ${IsNativeARM64}
+      ${If} $1 == ""
+        SetRegView 64
+        ReadRegStr $1 HKLM ${MaintUninstallKey} "UninstallString"
+        SetRegView lastused
+      ${EndIf}
+    ${EndIf}
+
+    ; If the uninstall string does not exist, skip executing it
+    ${If} $1 != ""
+      ; $1 is already a quoted string pointing to the install path
+      ; so we're already protected against paths with spaces
+      nsExec::Exec "$1 /S"
+    ${EndIf}
+  ${EndIf}
+
+  ; Restore the old value of $1 and $0
+  Pop $1
+  Pop $0
+FunctionEnd
 
 ################################################################################
 # Install Sections
@@ -218,7 +263,7 @@ Section "Uninstall"
   ${If} ${Errors}
     ; If the user closed the application it can take several seconds for it to
     ; shut down completely. If the application is being used by another user we
-    ; can still delete the files when the system is restarted. 
+    ; can still delete the files when the system is restarted.
     Sleep 5000
     ${DeleteFile} "$INSTDIR\${FileMainEXE}"
     ClearErrors
@@ -231,6 +276,19 @@ Section "Uninstall"
   ${un.RegCleanMain} "Software\Mozilla"
   ${un.RegCleanUninstall}
   ${un.DeleteShortcuts}
+
+  ; Unregister resources associated with Win7 taskbar jump lists.
+  ${If} ${AtLeastWin7}
+  ${AndIf} "$AppUserModelID" != ""
+    ApplicationID::UninstallJumpLists "$AppUserModelID"
+  ${EndIf}
+
+  ; Clean up old maintenance service logs
+  ${un.CleanMaintenanceServiceLogs} "Thunderbird"
+
+  ; Remove any app model id's stored in the registry for this install path
+  DeleteRegValue HKCU "Software\Mozilla\${AppName}\TaskBarIDs" "$INSTDIR"
+  DeleteRegValue HKLM "Software\Mozilla\${AppName}\TaskBarIDs" "$INSTDIR"
 
   ClearErrors
   WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
@@ -246,22 +304,18 @@ Section "Uninstall"
   ${EndIf}
 
   ${un.RegCleanAppHandler} "Thunderbird.Url.mailto"
+  ${un.RegCleanAppHandler} "Thunderbird.Url.mid"
   ${un.RegCleanAppHandler} "Thunderbird.Url.news"
+  ${un.RegCleanAppHandler} "Thunderbird.Url.webcal"
   ${un.RegCleanAppHandler} "ThunderbirdEML"
+  ${un.RegCleanAppHandler} "ThunderbirdICS"
   ${un.RegCleanProtocolHandler} "mailto"
+  ${un.RegCleanProtocolHandler} "mid"
   ${un.RegCleanProtocolHandler} "news"
   ${un.RegCleanProtocolHandler} "nntp"
   ${un.RegCleanProtocolHandler} "snews"
-
-  ; Unregister resources associated with Win7 taskbar jump lists.
-  ${If} "$AppUserModelID" != ""
-  ${AndIf} ${AtLeastWin7}
-    ApplicationID::UninstallJumpLists "$AppUserModelID"
-  ${EndIf}
-
-  ; Remove any app model id's stored in the registry for this install path
-  DeleteRegValue HKCU "Software\Mozilla\${AppName}\TaskBarIDs" "$INSTDIR"
-  DeleteRegValue HKLM "Software\Mozilla\${AppName}\TaskBarIDs" "$INSTDIR"
+  ${un.RegCleanProtocolHandler} "webcal"
+  ${un.RegCleanProtocolHandler} "webcals"
 
   ClearErrors
   ReadRegStr $R9 HKCR "ThunderbirdEML" ""
@@ -272,6 +326,17 @@ Section "Uninstall"
     ${un.RegCleanFileHandler}  ".eml"   "ThunderbirdEML"
     ${un.RegCleanFileHandler}  ".wdseml" "ThunderbirdEML"
     DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\explorer\KindMap" ".wdseml"
+    ; It doesn't matter if the value didn't exist
+    ClearErrors
+  ${EndIf}
+
+  ClearErrors
+  ReadRegStr $R9 HKCR "ThunderbirdICS" ""
+  ; Don't clean up the file handlers if the ThunderbirdICS key still exists
+  ; since there could be a second installation that may be the default file
+  ; handler.
+  ${If} ${Errors}
+    ${un.RegCleanFileHandler}  ".ics"   "ThunderbirdICS"
     ; It doesn't matter if the value didn't exist
     ClearErrors
   ${EndIf}
@@ -288,19 +353,21 @@ Section "Uninstall"
   ${un.RemoveQuotesFromPath} "$R1" $R1
   ${un.GetParent} "$R1" $R1
 
-  ; Only remove the Clients\Mail and Clients\News key if it refers to this 
-  ; install location. The Clients\Mail & Clients\News keys are independent 
-  ; of the default app for the OS settings. The XPInstall base un-installer 
-  ; always removes these keys if it is uninstalling the default app and it 
-  ; will always replace the keys when installing even if there is another 
+  ; Only remove the Clients\Mail & Clients\News & Clients\Calendar key if it
+  ; refers to this install location. The Clients\* keys are independent
+  ; of the default app for the OS settings. The XPInstall base un-installer
+  ; always removes these keys if it is uninstalling the default app and it
+  ; will always replace the keys when installing even if there is another
   ; install of Thunderbird that is set as the
   ; default app. Now the keys are always updated on install but are only
   ; removed if they refer to this install location.
   ${If} "$INSTDIR" == "$R1"
     DeleteRegKey HKLM "Software\Clients\Mail\${ClientsRegName}"
     DeleteRegKey HKLM "Software\Clients\News\${ClientsRegName}"
+    DeleteRegKey HKLM "Software\Clients\Calendar\${ClientsRegName}"
     DeleteRegValue HKLM "Software\RegisteredApplications" "${AppRegNameMail}"
     DeleteRegValue HKLM "Software\RegisteredApplications" "${AppRegNameNews}"
+    DeleteRegValue HKLM "Software\RegisteredApplications" "${AppRegNameCalendar}"
   ${EndIf}
 
   StrCpy $0 "Software\Microsoft\Windows\CurrentVersion\App Paths\${FileMainEXE}"
@@ -329,9 +396,6 @@ Section "Uninstall"
   ${If} ${FileExists} "$INSTDIR\distribution"
     RmDir /r /REBOOTOK "$INSTDIR\distribution"
   ${EndIf}
-  ${If} ${FileExists} "$INSTDIR\removed-files"
-    Delete /REBOOTOK "$INSTDIR\removed-files"
-  ${EndIf}
 
   ; Application update won't add these files to the uninstall log so delete
   ; them if they still exist.
@@ -342,52 +406,94 @@ Section "Uninstall"
     Delete /REBOOTOK "$INSTDIR\mozMapi32_InUse.dll"
   ${EndIf}
 
-  ; Remove the updates directory for Vista and above
-  ${un.CleanUpdatesDir} "Thunderbird"
-
   ; Remove files that may be left behind by the application in the
   ; VirtualStore directory.
   ${un.CleanVirtualStore}
 
-  ; Parse the uninstall log to unregister dll's and remove all installed
-  ; files / directories this install is responsible for.
-  ${un.ParseUninstallLog}
+  ; Only unregister the dll if the registration points to this installation
+  ReadRegStr $R1 HKCR "CLSID\{0D68D6D0-D93D-4D08-A30D-F00DD1F45B24}\InProcServer32" ""
+  ${If} "$INSTDIR\AccessibleMarshal.dll" == "$R1"
+    ${UnregisterDLL} "$INSTDIR\AccessibleMarshal.dll"
+  ${EndIf}
 
-  ; Remove the uninstall directory that we control
-  RmDir /r /REBOOTOK "$INSTDIR\uninstall"
+  ${If} ${FileExists} "$INSTDIR\AccessibleHandler.dll"
+    ${UnregisterDLL} "$INSTDIR\AccessibleHandler.dll"
+  ${EndIf}
+
+  ; Remove the Windows Reporter Module entry
+  DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\RuntimeExceptionHelperModules" "$INSTDIR\mozwer.dll"
+
+  ${un.RemovePrecompleteEntries} "false"
+
+  ${If} ${FileExists} "$INSTDIR\defaults\pref\channel-prefs.js"
+    Delete /REBOOTOK "$INSTDIR\defaults\pref\channel-prefs.js"
+  ${EndIf}
+  RmDir "$INSTDIR\defaults\pref"
+  RmDir "$INSTDIR\defaults"
+  ${If} ${FileExists} "$INSTDIR\uninstall"
+    ; Remove the uninstall directory that we control
+    RmDir /r /REBOOTOK "$INSTDIR\uninstall"
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\install.log"
+    Delete /REBOOTOK "$INSTDIR\install.log"
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\update-settings.ini"
+    Delete /REBOOTOK "$INSTDIR\update-settings.ini"
+  ${EndIf}
 
   ; Remove the installation directory if it is empty
-  ${RemoveDir} "$INSTDIR"
+  RmDir "$INSTDIR"
 
   ; If thunderbird.exe was successfully deleted yet we still need to restart to
   ; remove other files create a dummy thunderbird.exe.moz-delete to prevent the
   ; installer from allowing an install without restart when it is required
   ; to complete an uninstall.
   ${If} ${RebootFlag}
-    ${Unless} ${FileExists} "$INSTDIR\${FileMainEXE}.moz-delete"
-      FileOpen $0 "$INSTDIR\${FileMainEXE}.moz-delete" w
-      FileWrite $0 "Will be deleted on restart"
-      Delete /REBOOTOK "$INSTDIR\${FileMainEXE}.moz-delete"
-      FileClose $0
-    ${EndUnless}
+    ; Admin is required to delete files on reboot so only add the moz-delete if
+    ; the user is an admin. After calling UAC::IsAdmin $0 will equal 1 if the
+    ; user is an admin.
+    UAC::IsAdmin
+    ${If} "$0" == "1"
+      ${Unless} ${FileExists} "$INSTDIR\${FileMainEXE}.moz-delete"
+        FileOpen $0 "$INSTDIR\${FileMainEXE}.moz-delete" w
+        FileWrite $0 "Will be deleted on restart"
+        Delete /REBOOTOK "$INSTDIR\${FileMainEXE}.moz-delete"
+        FileClose $0
+      ${EndUnless}
+    ${EndIf}
   ${EndIf}
 
   ; Refresh desktop icons otherwise the start menu internet item won't be
   ; removed and other ugly things will happen like recreation of the app's
   ; clients registry key by the OS under some conditions.
-  System::Call "shell32::SHChangeNotify(i, i, i, i) v (0x08000000, 0, 0, 0)"
-SectionEnd
+  ${RefreshShellIcons}
 
-################################################################################
-# Helper Functions
-
-; Don't setup the survey controls, functions, etc. when the application has
-; defined NO_UNINSTALL_SURVEY
-!ifndef NO_UNINSTALL_SURVEY
-Function un.Survey
-  ExecShell "open" "${SurveyURL}"
-FunctionEnd
+!ifdef MOZ_MAINTENANCE_SERVICE
+  ; Get the path the allowed cert is at and remove it
+  ; Keep this block of code last since it modifies the reg view
+  ServicesHelper::PathToUniqueRegistryPath "$INSTDIR"
+  Pop $MaintCertKey
+  ${If} $MaintCertKey != ""
+    ; Always use the 64bit registry for certs on 64bit systems.
+    ${If} ${RunningX64}
+    ${OrIf} ${IsNativeARM64}
+      SetRegView 64
+    ${EndIf}
+    DeleteRegKey HKLM "$MaintCertKey"
+    ${If} ${RunningX64}
+    ${OrIf} ${IsNativeARM64}
+      SetRegView lastused
+    ${EndIf}
+  ${EndIf}
+  Call un.UninstallServiceIfNotUsed
 !endif
+
+!ifdef MOZ_BITS_DOWNLOAD
+  BitsUtils::CancelBitsJobsByName "MozillaUpdate $AppUserModelID"
+  Pop $0
+!endif
+
+SectionEnd
 
 ################################################################################
 # Language
@@ -411,12 +517,29 @@ Function un.preWelcome
     Delete "$PLUGINSDIR\modern-wizard.bmp"
     CopyFiles /SILENT "$INSTDIR\distribution\modern-wizard.bmp" "$PLUGINSDIR\modern-wizard.bmp"
   ${EndIf}
+!ifdef MOZ_BITS_DOWNLOAD
+  BitsUtils::StartBitsServiceBackground
+!endif
+FunctionEnd
+
+Function un.ShowWelcome
+  ; The welcome and finish pages don't get the correct colors for their labels
+  ; like the other pages do, presumably because they're built by filling in an
+  ; InstallOptions .ini file instead of from a dialog resource like the others.
+  ; Field 2 is the header and Field 3 is the body text.
+  ReadINIStr $0 "$PLUGINSDIR\ioSpecial.ini" "Field 2" "HWND"
+  SetCtlColors $0 SYSCLR:WINDOWTEXT SYSCLR:WINDOW
+
+  ReadINIStr $0 "$PLUGINSDIR\ioSpecial.ini" "Field 3" "HWND"
+  SetCtlColors $0 SYSCLR:WINDOWTEXT SYSCLR:WINDOW
 FunctionEnd
 
 Function un.leaveWelcome
   ${If} ${FileExists} "$INSTDIR\${FileMainEXE}"
     Banner::show /NOUNLOAD "$(BANNER_CHECK_EXISTING)"
 
+    ; If the message window has been found previously give the app an additional
+    ; five seconds to close.
     ${If} "$TmpVal" == "FoundMessageWindow"
       Sleep 5000
     ${EndIf}
@@ -427,15 +550,27 @@ Function un.leaveWelcome
 
     Banner::destroy
 
+    ; If there are files in use $TmpVal will be "true"
     ${If} "$TmpVal" == "true"
+      ; If the message window is found the call to ManualCloseAppPrompt will
+      ; abort leaving the value of $TmpVal set to "FoundMessageWindow".
       StrCpy $TmpVal "FoundMessageWindow"
       ${un.ManualCloseAppPrompt} "${WindowClass}" "$(WARN_MANUALLY_CLOSE_APP_UNINSTALL)"
+      ; If the message window is not found set $TmpVal to "true" so the restart
+      ; required message is displayed.
       StrCpy $TmpVal "true"
     ${EndIf}
   ${EndIf}
 FunctionEnd
 
 Function un.preConfirm
+  ; The header and subheader on the wizard pages don't get the correct text
+  ; color by default for some reason, even though the other controls do.
+  GetDlgItem $0 $HWNDPARENT 1037
+  SetCtlColors $0 SYSCLR:WINDOWTEXT SYSCLR:WINDOW
+  GetDlgItem $0 $HWNDPARENT 1038
+  SetCtlColors $0 SYSCLR:WINDOWTEXT SYSCLR:WINDOW
+
   ${If} ${FileExists} "$INSTDIR\distribution\modern-header.bmp"
   ${AndIf} $hHeaderBitmap == ""
     Delete "$PLUGINSDIR\modern-header.bmp"
@@ -443,6 +578,7 @@ Function un.preConfirm
     ${un.ChangeMUIHeaderImage} "$PLUGINSDIR\modern-header.bmp"
   ${EndIf}
 
+  ; Setup the unconfirm.ini file for the Custom Uninstall Confirm Page
   WriteINIStr "$PLUGINSDIR\unconfirm.ini" "Settings" NumFields "3"
 
   WriteINIStr "$PLUGINSDIR\unconfirm.ini" "Field 1" Type   "label"
@@ -492,49 +628,45 @@ Function un.preConfirm
   !insertmacro MUI_INSTALLOPTIONS_SHOW
 FunctionEnd
 
-Function un.leaveConfirm
-  ; Try to delete the app executable and if we can't delete it try to find the
-  ; app's message window and prompt the user to close the app. This allows
-  ; running an instance that is located in another directory. If for whatever
-  ; reason there is no message window we will just rename the app's files and
-  ; then remove them on restart if they are in use.
+Function un.ShowFinish
+  ReadINIStr $0 "$PLUGINSDIR\ioSpecial.ini" "Field 2" "HWND"
+  SetCtlColors $0 SYSCLR:WINDOWTEXT SYSCLR:WINDOW
+
+  ReadINIStr $0 "$PLUGINSDIR\ioSpecial.ini" "Field 3" "HWND"
+  SetCtlColors $0 SYSCLR:WINDOWTEXT SYSCLR:WINDOW
+
+  ; Either Fields 4 and 5 are the reboot option radio buttons, or Field 4 is
+  ; the survey checkbox and Field 5 doesn't exist. Either way, we need to
+  ; clear the theme from them before we can set their background colors.
+  ReadINIStr $0 "$PLUGINSDIR\ioSpecial.ini" "Field 4" "HWND"
+  System::Call 'uxtheme::SetWindowTheme(i $0, w " ", w " ")'
+  SetCtlColors $0 SYSCLR:WINDOWTEXT SYSCLR:WINDOW
+
   ClearErrors
-  ${DeleteFile} "$INSTDIR\${FileMainEXE}"
-  ${If} ${Errors}
-    ${un.ManualCloseAppPrompt} "${WindowClass}" "$(WARN_MANUALLY_CLOSE_APP_UNINSTALL)"
+  ReadINIStr $0 "$PLUGINSDIR\ioSpecial.ini" "Field 5" "HWND"
+  ${IfNot} ${Errors}
+    System::Call 'uxtheme::SetWindowTheme(i $0, w " ", w " ")'
+    SetCtlColors $0 SYSCLR:WINDOWTEXT SYSCLR:WINDOW
   ${EndIf}
 FunctionEnd
-
-!ifndef NO_UNINSTALL_SURVEY
-Function un.preFinish
-  ; Do not modify the finish page if there is a reboot pending
-  ${Unless} ${RebootFlag}
-    ; Don't display the option to take a survey on the finish page if the OS is
-    ; Vista or above since the process will be running elevated.
-    ${If} ${AtLeastWinVista}
-      !insertmacro MUI_INSTALLOPTIONS_WRITE "ioSpecial.ini" "settings" "NumFields" "3"
-    ${Else}
-      ; When we add an optional action to the finish page the cancel button
-      ; is enabled. This disables it and leaves the finish button as the
-      ; only choice.
-      !insertmacro MUI_INSTALLOPTIONS_WRITE "ioSpecial.ini" "settings" "cancelenabled" "0"
-    ${EndIf}
-  ${EndUnless}
-FunctionEnd
-!endif
 
 ################################################################################
 # Initialization Functions
 
 Function .onInit
+  ; Remove the current exe directory from the search order.
+  ; This only effects LoadLibrary calls and not implicitly loaded DLLs.
+  System::Call 'kernel32::SetDllDirectoryW(w "")'
+
   ; We need this set up for most of the helper.exe operations.
-  !ifdef AppName
-  ${InitHashAppModelId} "$INSTDIR" "Software\Mozilla\${AppName}\TaskBarIDs"
-  !endif
   ${UninstallOnInitCommon}
 FunctionEnd
 
 Function un.onInit
+  ; Remove the current exe directory from the search order.
+  ; This only effects LoadLibrary calls and not implicitly loaded DLLs.
+  System::Call 'kernel32::SetDllDirectoryW(w "")'
+
   StrCpy $LANGUAGE 0
 
   ${un.UninstallUnOnInitCommon}

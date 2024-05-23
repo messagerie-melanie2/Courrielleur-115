@@ -1,129 +1,188 @@
-# -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*-
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is the Thunderbird Default Client Dialog
-#
-# The Initial Developer of the Original Code is
-#   Scott MacGregor <mscott@mozilla.org>
-# Portions created by the Initial Developer are Copyright (C) 2006
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or
-# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+/* -*- Mode: Javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// this dialog can only be opened if we have a shell service
+// This dialog can only be opened if we have a shell service.
+
+var { SearchIntegration } = ChromeUtils.import(
+  "resource:///modules/SearchIntegration.jsm"
+);
 
 var gSystemIntegrationDialog = {
-  /// Whether the search integration checkbox is disabled or hidden
-  _searchCheckboxInactive: false,
-  
-  onLoad: function () 
-  {
-    var nsIShellService = Components.interfaces.nsIShellService;
-    var shellSvc = Components.classes["@mozilla.org/mail/shell-service;1"]
-                             .getService(nsIShellService);
-                               
-    // initialize the check boxes based on the default app states.
-    var mailCheckbox = document.getElementById('checkMail');
-    var newsCheckbox = document.getElementById('checkNews');
-    var rssCheckbox = document.getElementById('checkRSS');
-    
-    mailCheckbox.disabled = shellSvc.isDefaultClient(false, nsIShellService.MAIL);
-    // as an optimization, if we aren't already the default mail client, then pre-check that option
-    // for the user. We'll leave news and RSS alone.
-    mailCheckbox.checked = true;
-    newsCheckbox.checked = newsCheckbox.disabled = shellSvc.isDefaultClient(false, nsIShellService.NEWS);
-    rssCheckbox.checked  = rssCheckbox.disabled  = shellSvc.isDefaultClient(false, nsIShellService.RSS);       
-    
+  _shellSvc: Cc["@mozilla.org/mail/shell-service;1"].getService(
+    Ci.nsIShellService
+  ),
+
+  _mailCheckbox: null,
+
+  _newsCheckbox: null,
+
+  _rssCheckbox: null,
+
+  _startupCheckbox: null,
+
+  _searchCheckbox: null,
+
+  onLoad() {
+    // initialize elements
+    this._mailCheckbox = document.getElementById("checkMail");
+    this._newsCheckbox = document.getElementById("checkNews");
+    this._rssCheckbox = document.getElementById("checkRSS");
+    this._calendarCheckbox = document.getElementById("checkCalendar");
+    this._startupCheckbox = document.getElementById("checkOnStartup");
+    this._searchCheckbox = document.getElementById("searchIntegration");
+
+    // Initialize the check boxes based on the default app states.
+    this._mailCheckbox.disabled = this._shellSvc.isDefaultClient(
+      false,
+      this._shellSvc.MAIL
+    );
+
+    let calledFromPrefs =
+      "arguments" in window && window.arguments[0] == "calledFromPrefs";
+
+    if (!calledFromPrefs) {
+      // As an optimization, if we aren't already the default mail client,
+      // then pre-check that option for the user. We'll leave News and RSS alone.
+      // Do this only if we are not called from the Preferences (Options) dialog.
+      // In that case, the user may want to just check what the current state is.
+      this._mailCheckbox.checked = true;
+    } else {
+      this._mailCheckbox.checked = this._mailCheckbox.disabled;
+
+      // If called from preferences, use only a simpler "Cancel" label on the
+      // cancel button.
+      document.querySelector("dialog").getButton("cancel").label = document
+        .querySelector("dialog")
+        .getAttribute("buttonlabelcancel2");
+    }
+
+    if (!this._mailCheckbox.disabled) {
+      this._mailCheckbox.removeAttribute("tooltiptext");
+    }
+
+    this._newsCheckbox.checked = this._newsCheckbox.disabled =
+      this._shellSvc.isDefaultClient(false, this._shellSvc.NEWS);
+    if (!this._newsCheckbox.disabled) {
+      this._newsCheckbox.removeAttribute("tooltiptext");
+    }
+
+    this._rssCheckbox.checked = this._rssCheckbox.disabled =
+      this._shellSvc.isDefaultClient(false, this._shellSvc.RSS);
+    if (!this._rssCheckbox.disabled) {
+      this._rssCheckbox.removeAttribute("tooltiptext");
+    }
+
+    this._calendarCheckbox.checked = this._calendarCheckbox.disabled =
+      this._shellSvc.isDefaultClient(false, this._shellSvc.CALENDAR);
+
     // read the raw pref value and not shellSvc.shouldCheckDefaultMail
-    var prefs = Components.classes["@mozilla.org/preferences-service;1"]
-                .getService(Components.interfaces.nsIPrefBranch);
-    document.getElementById('checkOnStartup').checked = prefs.getBoolPref("mail.shell.checkDefaultClient");
+    this._startupCheckbox.checked = Services.prefs.getBoolPref(
+      "mail.shell.checkDefaultClient"
+    );
 
-    // Search integration -- check whether we should hide or disable integration
-    let hideSearchUI = false;
-    let disableSearchUI = false;
-    Components.utils.import("resource:///modules/SearchIntegration.js");
-    if (SearchIntegration)
-    {
-      if (SearchIntegration.osVersionTooLow)
-        hideSearchUI = true;
-      else if (SearchIntegration.osComponentsNotRunning)
-        disableSearchUI = true;
-    }
-    else
-    {
-      hideSearchUI = true;
-    }
-
-    let searchCheckbox = document.getElementById("searchIntegration");
-
-    if (hideSearchUI)
-    {
-      this._searchCheckboxInactive = true;
-      document.getElementById("searchIntegrationContainer").hidden = true;
-    }
-    else if (disableSearchUI)
-    {
-      this._searchCheckboxInactive = true;
-      searchCheckbox.checked = false;
-      searchCheckbox.disabled = true;
-    }
-    else
-    {
-      searchCheckbox.checked = SearchIntegration.prefEnabled;
+    // Search integration - check whether we should show/disable integration options
+    if (SearchIntegration) {
+      this._searchCheckbox.checked = SearchIntegration.prefEnabled;
+      // On Windows, do not offer the option on startup as it does not perform well.
+      if (
+        Services.appinfo.OS == "WINNT" &&
+        !calledFromPrefs &&
+        !this._searchCheckbox.checked
+      ) {
+        this._searchCheckbox.hidden = true;
+        // Even if the user wasn't presented the choice,
+        // we do not want to ask again automatically.
+        SearchIntegration.firstRunDone = true;
+      } else if (!SearchIntegration.osVersionTooLow) {
+        // Hide/disable the options if the OS does not support them.
+        this._searchCheckbox.hidden = false;
+        if (SearchIntegration.osComponentsNotRunning) {
+          this._searchCheckbox.checked = false;
+          this._searchCheckbox.disabled = true;
+        }
+      }
     }
   },
-  
-  onAccept: function()
-  {
-    // for each checked item, if we aren't already the default, make us the default.
-    var nsIShellService = Components.interfaces.nsIShellService;    
-    var shellSvc = Components.classes["@mozilla.org/mail/shell-service;1"]
-                             .getService(nsIShellService);
-    var appTypes = 0;                            
-    if (document.getElementById('checkMail').checked && !shellSvc.isDefaultClient(false, nsIShellService.MAIL))
-      appTypes |= nsIShellService.MAIL;
-    if (document.getElementById('checkNews').checked && !shellSvc.isDefaultClient(false, nsIShellService.NEWS))
-      appTypes |= nsIShellService.NEWS;
-    if (document.getElementById('checkRSS').checked &&  !shellSvc.isDefaultClient(false, nsIShellService.RSS))
-      appTypes |= nsIShellService.RSS;
-    
-    if (appTypes)
-      shellSvc.setDefaultClient(false, appTypes);
 
-    shellSvc.shouldCheckDefaultClient = document.getElementById('checkOnStartup').checked;
-    
-    // Set the search integration pref if it's changed
-    // The integration will handle the rest
-    if (!this._searchCheckboxInactive)
-    {
-      SearchIntegration.prefEnabled = document.getElementById("searchIntegration").checked;
+  /**
+   * Called when the dialog is closed by any button.
+   *
+   * @param aSetAsDefault  If true, set TB as the default application for the
+   *                       checked actions (mail/news/rss). Otherwise do nothing.
+   */
+  onDialogClose(aSetAsDefault) {
+    // In all cases, save the user's decision for "always check at startup".
+    this._shellSvc.shouldCheckDefaultClient = this._startupCheckbox.checked;
+
+    // If the search checkbox is exposed, the user had the chance to make his choice.
+    // So do not ask next time.
+    let searchIntegPossible = !this._searchCheckbox.hidden;
+    if (searchIntegPossible) {
       SearchIntegration.firstRunDone = true;
     }
-  }
+
+    // If the "skip integration" button was used do not set any defaults
+    // and close the dialog.
+    if (!aSetAsDefault) {
+      // Disable search integration in this case.
+      if (searchIntegPossible) {
+        SearchIntegration.prefEnabled = false;
+      }
+
+      return true;
+    }
+
+    // For each checked item, if we aren't already the default client,
+    // make us the default.
+    let appTypes = 0;
+
+    if (
+      this._mailCheckbox.checked &&
+      !this._shellSvc.isDefaultClient(false, this._shellSvc.MAIL)
+    ) {
+      appTypes |= this._shellSvc.MAIL;
+    }
+
+    if (
+      this._newsCheckbox.checked &&
+      !this._shellSvc.isDefaultClient(false, this._shellSvc.NEWS)
+    ) {
+      appTypes |= this._shellSvc.NEWS;
+    }
+
+    if (
+      this._rssCheckbox.checked &&
+      !this._shellSvc.isDefaultClient(false, this._shellSvc.RSS)
+    ) {
+      appTypes |= this._shellSvc.RSS;
+    }
+
+    if (
+      this._calendarCheckbox.checked &&
+      !this._shellSvc.isDefaultClient(false, this._shellSvc.CALENDAR)
+    ) {
+      appTypes |= this._shellSvc.CALENDAR;
+    }
+
+    if (appTypes) {
+      this._shellSvc.setDefaultClient(false, appTypes);
+    }
+
+    // Set the search integration pref if it is changed.
+    // The integration will handle the rest.
+    if (searchIntegPossible) {
+      SearchIntegration.prefEnabled = this._searchCheckbox.checked;
+    }
+
+    return true;
+  },
 };
+
+document.addEventListener("dialogaccept", () =>
+  gSystemIntegrationDialog.onDialogClose(true)
+);
+document.addEventListener("dialogcancel", () =>
+  gSystemIntegrationDialog.onDialogClose(false)
+);

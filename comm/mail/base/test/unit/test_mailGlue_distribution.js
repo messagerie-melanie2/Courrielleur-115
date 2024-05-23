@@ -1,11 +1,11 @@
-Components.utils.import("resource:///modules/distribution.js");
-Components.utils.import("resource://gre/modules/Services.jsm");
+var { TBDistCustomizer } = ChromeUtils.import(
+  "resource:///modules/TBDistCustomizer.jsm"
+);
 
-function run_test()
-{
+function run_test() {
   do_test_pending();
 
-  Services.prefs.setCharPref("general.useragent.locale", "en-US");
+  Services.locale.requestedLocales = ["en-US"];
 
   // Create an instance of nsIFile out of the current process directory
   let distroDir = Services.dirsvc.get("XCurProcD", Ci.nsIFile);
@@ -20,16 +20,16 @@ function run_test()
   iniFile.append("distribution.ini");
   // It's a bug if distribution.ini already exists
   if (iniFile.exists()) {
-    do_throw("distribution.ini already exists in objdir/mozilla/dist/bin/distribution.");
+    do_throw(
+      "distribution.ini already exists in objdir/mozilla/dist/bin/distribution."
+    );
   }
 
-  do_register_cleanup(function() {
+  registerCleanupFunction(function () {
     // Remove the distribution.ini file
-    let iniFile = Services.dirsvc.get("XCurProcD", Ci.nsIFile);
-    iniFile.append("distribution");
-    iniFile.append("distribution.ini");
-    if (iniFile.exists())
+    if (iniFile.exists()) {
       iniFile.remove(true);
+    }
   });
 
   let testDir = Services.dirsvc.get("CurWorkD", Ci.nsIFile);
@@ -39,86 +39,81 @@ function run_test()
   testDistributionFile.append("distribution.ini");
   // Copy to distroDir
   testDistributionFile.copyTo(distroDir, "distribution.ini");
-  do_check_true(testDistributionFile.exists());
+  Assert.ok(testDistributionFile.exists());
 
   // Set the prefs
   TBDistCustomizer.applyPrefDefaults();
 
   let testIni = Cc["@mozilla.org/xpcom/ini-parser-factory;1"]
-                  .getService(Ci.nsIINIParserFactory)
-                  .createINIParser(testDistributionFile);
+    .getService(Ci.nsIINIParserFactory)
+    .createINIParser(testDistributionFile);
 
-  // Now check that prefs were set - test the Global prefs against the 
+  // Now check that prefs were set - test the Global prefs against the
   // Global section in the ini file
   let iniValue = testIni.getString("Global", "id");
   let pref = Services.prefs.getCharPref("distribution.id");
-  do_check_eq(iniValue, pref);
+  Assert.equal(iniValue, pref);
 
   iniValue = testIni.getString("Global", "version");
   pref = Services.prefs.getCharPref("distribution.version");
-  do_check_eq(iniValue, pref);
+  Assert.equal(iniValue, pref);
 
   let aboutLocale;
   try {
     aboutLocale = testIni.getString("Global", "about.en-US");
-  } 
-  catch (e) {
-    Components.utils.reportError(e);
+  } catch (e) {
+    console.error(e);
   }
 
-  if (aboutLocale == undefined)
+  if (aboutLocale == undefined) {
     aboutLocale = testIni.getString("Global", "about");
+  }
 
   pref = Services.prefs.getCharPref("distribution.about");
-  do_check_eq(aboutLocale, pref);
-  
+  Assert.equal(aboutLocale, pref);
+
   // Test Preferences section
   let s = "Preferences";
-  let keys = testIni.getKeys(s);
-  while (keys.hasMore()) {
-    let key = keys.getNext();
-    let value = eval(testIni.getString(s, key));
+  for (let key of testIni.getKeys(s)) {
+    let value = TBDistCustomizer.parseValue(testIni.getString(s, key));
     switch (typeof value) {
-    case "boolean":
-        do_check_eq(value, Services.prefs.getBoolPref(key));
+      case "boolean":
+        Assert.equal(value, Services.prefs.getBoolPref(key));
         break;
-    case "number":
-        do_check_eq(value, Services.prefs.getIntPref(key));
+      case "number":
+        Assert.equal(value, Services.prefs.getIntPref(key));
         break;
-    case "string":
-        do_check_eq(value, Services.prefs.getCharPref(key));
+      case "string":
+        Assert.equal(value, Services.prefs.getCharPref(key));
         break;
-    case "undefined":
-        do_check_eq(value, Services.prefs.getPref(key));
-        break;
+      default:
+        do_throw(
+          "The preference " + key + " is of unknown type: " + typeof value
+        );
     }
   }
-  
+
   // Test the LocalizablePreferences-[locale] section
   // Add any prefs found in it to the overrides array
   let overrides = [];
   s = "LocalizablePreferences-en-US";
-  keys = testIni.getKeys(s);
-  while (keys.hasMore()) {
-    let key = keys.getNext();
-    let value = eval(testIni.getString(s, key));
+  for (let key of testIni.getKeys(s)) {
+    let value = TBDistCustomizer.parseValue(testIni.getString(s, key));
     value = "data:text/plain," + key + "=" + value;
-    do_check_eq(value, Services.prefs.getCharPref(key));
+    Assert.equal(value, Services.prefs.getCharPref(key));
     overrides.push(key);
   }
 
   // Test the LocalizablePreferences section
-  // Any prefs here that aren't found in overrides are not overriden 
+  // Any prefs here that aren't found in overrides are not overridden
   //   by LocalizablePrefs-[locale] and should be tested
-  s = "LocalizablePreferences"; 
-  keys = testIni.getKeys(s);
-  while (keys.hasMore()) {
-    let key = keys.getNext();
-    if (overrides.indexOf(key) == -1) {
-      let value = eval(testIni.getString(s, key));
-      value =  value.replace("%LOCALE%", "en-US", "g");
+  s = "LocalizablePreferences";
+  for (let key of testIni.getKeys(s)) {
+    if (!overrides.includes(key)) {
+      let value = TBDistCustomizer.parseValue(testIni.getString(s, key));
+      value = value.replace(/%LOCALE%/g, "en-US");
       value = "data:text/plain," + key + "=" + value;
-      do_check_eq(value, Services.prefs.getCharPref(key));
+      Assert.equal(value, Services.prefs.getCharPref(key));
     }
   }
   do_test_finished();

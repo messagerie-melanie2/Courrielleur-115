@@ -1,4 +1,8 @@
-<!-- extracted from am-main.xul -->
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+
+<!-- extracted from am-main.xhtml -->
 
 <!ENTITY accountTitle.label "Account Settings">
 <!ENTITY accountName.label "Account Name:">
@@ -9,6 +13,8 @@
 <!ENTITY name.accesskey "Y">
 <!ENTITY email.label "Email Address:">
 <!ENTITY email.accesskey "E">
+<!ENTITY catchAll.label "Reply from this identity when delivery headers match:">
+<!ENTITY catchAll.accesskey "d">
 <!ENTITY replyTo.label "Reply-to Address:">
 <!ENTITY replyTo.accesskey "s">
 <!ENTITY replyTo.placeholder "Recipients will reply to this other address">
@@ -36,3 +42,6 @@
 <!ENTITY smtpName.label "Outgoing Server (SMTP):">
 <!ENTITY smtpName.accesskey "u">
 <!ENTITY smtpDefaultServer.label "Use Default Server">
+
+<!ENTITY smtpServerEdit.label "Edit SMTP server…">
+<!ENTITY smtpServerEdit.accesskey "P">
