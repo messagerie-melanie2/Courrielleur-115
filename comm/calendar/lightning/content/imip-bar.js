@@ -7,6 +7,9 @@
 
 var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
 
+//#6927: Forcer une synchronisation d'agenda avant l'affichage d'une invitation
+var lastRefresh = Date.now();
+
 /**
  * Provides shortcuts to set label and collapsed attribute of imip-bar node.
  */
@@ -253,6 +256,20 @@ var calImipBar = {
     if (itipItem !== calImipBar.loadingItipItem) {
       // The given itipItem refers to an earlier displayed message.
       return;
+    }
+
+    //#6927: Forcer une synchronisation d'agenda avant l'affichage d'une invitation
+    //(Uniquement si la date de dernier rafraichissement est infèrieur à la date du message et date de plus de 1 minute)
+    let refreshTreshold = new Date(Date.now());
+    refreshTreshold.setSeconds(refreshTreshold.getSeconds()-5);
+    if(lastRefresh < gMessage.date/1000 && lastRefresh < refreshTreshold)
+    {
+      lastRefresh = new Date(Date.now());
+      let calendars = cal.manager.getCalendars({});//.filter(cal.itip.isSchedulingCalendar);
+      for (i = 0; i < calendars.length; i++)
+      {
+        calendars[i].refresh();
+      }
     }
 
     let data = cal.itip.getOptionsText(itipItem, rc, actionFunc, foundItems);
