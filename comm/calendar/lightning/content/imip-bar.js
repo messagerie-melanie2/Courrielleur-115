@@ -1,214 +1,429 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Lightning code.
- *
- * The Initial Developer of the Original Code is Simdesk Technologies Inc.
- * Portions created by the Initial Developer are Copyright (C) 2006
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Clint Talbert <ctalbert.moz@gmail.com>
- *   Matthew Willis <lilmatt@mozilla.com>
- *   Philipp Kewisch <mozilla@kewis.ch>
- *   Daniel Boelzle <daniel.boelzle@sun.com>
- *   Martin Schroeder <mschroeder@mozilla.x-home.org>
- *   Simon Vaillancourt <simon.at.orcl@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-Components.utils.import("resource://calendar/modules/calUtils.jsm");
-Components.utils.import("resource://calendar/modules/calItipUtils.jsm");
+/* import-globals-from ../../../mail/base/content/msgHdrView.js */
+/* import-globals-from item-editing/calendar-item-editing.js */
+
+var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+
+/**
+ * Provides shortcuts to set label and collapsed attribute of imip-bar node.
+ */
+const imipBar = {
+  get bar() {
+    return document.querySelector(".calendar-notification-bar");
+  },
+  get label() {
+    return this.bar.querySelector(".msgNotificationBarText").textContent;
+  },
+  set label(val) {
+    this.bar.querySelector(".msgNotificationBarText").textContent = val;
+  },
+  get collapsed() {
+    return this.bar.collapsed;
+  },
+  set collapsed(val) {
+    this.bar.collapsed = val;
+  },
+};
 
 /**
  * This bar lives inside the message window.
  * Its lifetime is the lifetime of the main thunderbird message window.
  */
-var ltnImipBar = {
+var calImipBar = {
+  actionFunc: null,
+  itipItem: null,
+  foundItems: null,
+  loadingItipItem: null,
 
-    actionFunc: null,
-    itipItem: null,
-    foundItems: null,
+  /**
+   * Thunderbird Message listener interface, hide the bar before we begin
+   */
+  onStartHeaders() {
+    calImipBar.resetBar();
+  },
 
-    /**
-     * Thunderbird Message listener interface, hide the bar before we begin
-     */
-    onStartHeaders: function onImipStartHeaders() {
-      ltnImipBar.hideBar();
-    },
+  /**
+   * Thunderbird Message listener interface
+   */
+  onEndHeaders() {},
 
-    /**
-     * Thunderbird Message listener interface
-     */
-    onEndHeaders: function onImipEndHeaders() {
+  /**
+   * Load Handler called to initialize the imip bar
+   * NOTE: This function is called without a valid this-context!
+   */
+  load() {
+    // Add a listener to gMessageListeners defined in msgHdrView.js
+    gMessageListeners.push(calImipBar);
 
-    },
+    // Hook into this event to hide the message header pane otherwise, the imip
+    // bar will still be shown when changing folders.
+    document.getElementById("msgHeaderView").addEventListener("message-header-pane-hidden", () => {
+      calImipBar.resetBar();
+    });
 
-    /**
-     * Load Handler called to initialize the imip bar
-     */
-    load: function ltnImipOnLoad() {
-        // Add a listener to gMessageListeners defined in msgHdrViewOverlay.js
-        gMessageListeners.push(ltnImipBar);
+    // Set up our observers
+    Services.obs.addObserver(calImipBar, "onItipItemCreation");
+  },
 
-        // We need to extend the HideMessageHeaderPane function to also hide the
-        // message header pane. Otherwise, the imip bar will still be shown when
-        // changing folders.
-        ltnImipBar.tbHideMessageHeaderPane = HideMessageHeaderPane;
-        HideMessageHeaderPane = function ltnHideMessageHeaderPane() {
-            ltnImipBar.hideBar();
-            ltnImipBar.tbHideMessageHeaderPane.apply(null, arguments);
-        };
+  /**
+   * Unload handler to clean up after the imip bar
+   * NOTE: This function is called without a valid this-context!
+   */
+  unload() {
+    removeEventListener("messagepane-loaded", calImipBar.load, true);
+    removeEventListener("messagepane-unloaded", calImipBar.unload, true);
 
-        // Set up our observers
-        Services.obs.addObserver(ltnImipBar, "onItipItemCreation", false);
-    },
+    calImipBar.resetBar();
+    Services.obs.removeObserver(calImipBar, "onItipItemCreation");
+  },
 
-    /**
-     * Unload handler to clean up after the imip bar
-     */
-    unload: function ltnImipOnUnload() {
-        removeEventListener("messagepane-loaded", ltnImipBar.load, true);
-        removeEventListener("messagepane-unloaded", ltnImipBar.unload, true);
-
-        ltnImipBar.itipItem = null;
-        Services.obs.removeObserver(ltnImipBar, "onItipItemCreation");
-    },
-
-    observe: function ltnImipBar_observe(subject, topic, state) {
-        if (topic == "onItipItemCreation") {
-            let itipItem = null;
-            try {
-                if (!subject) {
-                    let sinkProps = msgWindow.msgHeaderSink.properties;
-                    // This property was set by lightningTextCalendarConverter.js
-                    itipItem = sinkProps.getPropertyAsInterface("itipItem", Components.interfaces.calIItipItem);
-                }
-            } catch (e) {
-                // This will throw on every message viewed that doesn't have the
-                // itipItem property set on it. So we eat the errors and move on.
-
-                // XXX TODO: Only swallow the errors we need to. Throw all others.
-            }
-            if (!itipItem || !gMessageDisplay.displayedMessage) {
-                return;
-            }
-
-            let imipMethod = gMessageDisplay.displayedMessage.getStringProperty("imip_method");
-            cal.itip.initItemFromMsgData(itipItem, imipMethod, gMessageDisplay.displayedMessage);
-
-            let imipBar = document.getElementById("imip-bar");
-            imipBar.setAttribute("collapsed", "false");
-            imipBar.setAttribute("label",  cal.itip.getMethodText(itipItem.receivedMethod));
-
-            cal.itip.processItipItem(itipItem, ltnImipBar.setupOptions);
-        }
-    },
-
-    /**
-     * Hide the imip bar and reset the itip item.
-     */
-    hideBar: function ltnHideImipBar() {
-        document.getElementById("imip-bar").collapsed = true;
-        hideElement("imip-button1");
-        hideElement("imip-button2");
-        hideElement("imip-button3");
-        // Clear our iMIP/iTIP stuff so it doesn't contain stale information.
-        ltnImipBar.itipItem = null;
-    },
-
-    setupOptions: function setupOptions(itipItem, rc, actionFunc, foundItems) {
-        let imipBar =  document.getElementById("imip-bar");
-        let data = cal.itip.getOptionsText(itipItem, rc, actionFunc);
-
-        if (Components.isSuccessCode(rc)) {
-            ltnImipBar.itipItem = itipItem;
-            ltnImipBar.actionFunc = actionFunc;
-            ltnImipBar.foundItems = foundItems;
-        }
-
-        imipBar.setAttribute("label", data.label);
-        for each (let button in ["button1", "button2", "button3"]) {
-            let buttonElement = document.getElementById("imip-" + button);
-            if (data[button].label) {
-                buttonElement.setAttribute("label", data[button].label);
-                buttonElement.setAttribute("oncommand",
-                                           "ltnImipBar.executeAction('" + data[button].actionMethod + "')");
-
-                showElement(buttonElement);
-            }
-        }
-    },
-
-    executeAction: function ltnExecAction(partStat) {
-        if (partStat == "X-SHOWDETAILS") {
-            let items = ltnImipBar.foundItems;
-            if (items && items.length) {
-                let item = items[0].isMutable ? items[0] : items[0].clone();
-                modifyEventWithDialog(item);
-            }
-        } else if (cal.itip.promptCalendar(ltnImipBar.actionFunc.method, ltnImipBar.itipItem, window)) {
-            // hide the buttons now, to disable pressing them twice...
-            hideElement("imip-button1");
-            hideElement("imip-button2");
-            hideElement("imip-button3");
-
-            let opListener = {
-                onOperationComplete: function ltnItipActionListener_onOperationComplete(aCalendar,
-                                                                                        aStatus,
-                                                                                        aOperationType,
-                                                                                        aId,
-                                                                                        aDetail) {
-                    // For now, we just state the status for the user something very simple
-                    let imipBar = document.getElementById("imip-bar");
-                    let label = cal.itip.getCompleteText(aStatus, aOperationType);
-                    imipBar.setAttribute("label", label);
-
-                    if (!Components.isSuccessCode(aStatus)) {
-                        showError(label);
-                    }
-                },
-                onGetResult: function ltnItipActionListener_onGetResult(aCalendar,
-                                                                        aStatus,
-                                                                        aItemType,
-                                                                        aDetail,
-                                                                        aCount,
-                                                                        aItems) {
-                }
-            };
-
-            try {
-                ltnImipBar.actionFunc(opListener, partStat);
-            } catch (exc) {
-                Components.utils.reportError(exc);
-            }
-            return true;
-        }
-        return false;
+  showImipBar(itipItem, imipMethod) {
+    if (!Services.prefs.getBoolPref("calendar.itip.showImipBar", true)) {
+      // Do not show the imip bar if the user has opted out of seeing it.
+      return;
     }
+
+    // How we get here:
+    //
+    // 1. `mime_find_class` finds the `CalMimeConverter` class matches the
+    //      content-type of an attachment.
+    // 2. `mime_find_class` extracts the method from the attachments headers
+    //      and sets `imipMethod` on the message's mail channel.
+    // 3. `CalMimeConverter` is called to generate the HTML in the message.
+    //      It initialises `itipItem` and sets it on the channel.
+    // 4. msgHdrView.js gathers `itipItem` and `imipMethod` from the channel.
+
+    cal.itip.initItemFromMsgData(itipItem, imipMethod, gMessage);
+
+    if (Services.prefs.getBoolPref("calendar.itip.newInvitationDisplay")) {
+      window.dispatchEvent(new CustomEvent("onItipItemCreation", { detail: itipItem }));
+    }
+
+    imipBar.collapsed = false;
+    imipBar.label = cal.itip.getMethodText(itipItem.receivedMethod);
+
+    // This is triggered by CalMimeConverter.convertToHTML, so we know that
+    // the message is not yet loaded with the invite. Keep track of this for
+    // displayModifications.
+    calImipBar.overlayLoaded = false;
+
+    if (!Services.prefs.getBoolPref("calendar.itip.newInvitationDisplay")) {
+      calImipBar.overlayLoaded = true;
+
+      let doc = document.getElementById("messagepane").contentDocument;
+      let details = doc.getElementById("imipHTMLDetails");
+      let msgbody = doc.querySelector("div.moz-text-html");
+      if (!msgbody) {
+        details.setAttribute("open", "open");
+      } else {
+        // The HTML representation can contain important notes.
+
+        // For consistent appearance, move the generated meeting details first.
+        msgbody.prepend(details);
+
+        if (Services.prefs.getBoolPref("calendar.itip.imipDetailsOpen", true)) {
+          // Expand the iMIP details if pref says so.
+          details.setAttribute("open", "open");
+        }
+      }
+    }
+    // NOTE: processItipItem may call setupOptions asynchronously because the
+    // getItem method it triggers is async for *some* calendars. In theory,
+    // this could complete after a different item has been loaded, so we
+    // record the loading item now, and early exit setupOptions if the loading
+    // item has since changed.
+    // NOTE: loadingItipItem is reset on changing messages in resetBar.
+    calImipBar.loadingItipItem = itipItem;
+    cal.itip.processItipItem(itipItem, calImipBar.setupOptions);
+
+    // NOTE: At this point we essentially have two parallel async operations:
+    // 1. Load the CalMimeConverter.convertToHTML into the #messagepane and
+    //    then set overlayLoaded to true.
+    // 2. Find a corresponding event through processItipItem and then call
+    //    setupOptions. Note that processItipItem may be instantaneous for
+    //    some calendars.
+    //
+    // In the mean time, if we switch messages, then loadingItipItem will be
+    // set to some other value: either another item, or null by resetBar.
+    //
+    // Once setupOptions is called, if the message has since changed we do
+    // nothing and exit. Otherwise, if we found a corresponding item in the
+    // calendar, we proceed to displayModifications. If overlayLoaded is true
+    // we update the #messagepane immediately, otherwise we update it on
+    // DOMContentLoaded, which has not yet happened.
+  },
+
+  /**
+   * Hide the imip bar and reset the itip item.
+   */
+  resetBar() {
+    imipBar.collapsed = true;
+    calImipBar.resetButtons();
+
+    // Clear our iMIP/iTIP stuff so it doesn't contain stale information.
+    cal.itip.cleanupItipItem(calImipBar.itipItem);
+    calImipBar.itipItem = null;
+    calImipBar.loadingItipItem = null;
+  },
+
+  /**
+   * Resets all buttons and its menuitems, all buttons are hidden thereafter
+   */
+  resetButtons() {
+    let buttons = calImipBar.getButtons();
+    for (let button of buttons) {
+      button.setAttribute("hidden", "true");
+      for (let item of calImipBar.getMenuItems(button)) {
+        item.removeAttribute("hidden");
+      }
+    }
+  },
+
+  /**
+   * Provides a list of all available buttons
+   */
+  getButtons() {
+    let toolbarbuttons = document
+      .getElementById("imip-view-toolbar")
+      .getElementsByTagName("toolbarbutton");
+    return Array.from(toolbarbuttons);
+  },
+
+  /**
+   * Provides a list of available menuitems of a button
+   *
+   * @param aButton        button node
+   */
+  getMenuItems(aButton) {
+    let items = [];
+    let mitems = aButton.getElementsByTagName("menuitem");
+    if (mitems != null && mitems.length > 0) {
+      for (let mitem of mitems) {
+        items.push(mitem);
+      }
+    }
+    return items;
+  },
+
+  /**
+   * Checks and converts button types based on available menuitems of the buttons
+   * to avoid dropdowns which are empty or only replicating the default button action
+   * Should be called once the buttons are set up
+   */
+  conformButtonType() {
+    // check only needed on visible and not simple buttons
+    let buttons = calImipBar
+      .getButtons()
+      .filter(aElement => aElement.hasAttribute("type") && !aElement.hidden);
+    // change button if appropriate
+    for (let button of buttons) {
+      let items = calImipBar.getMenuItems(button).filter(aItem => !aItem.hidden);
+      if (button.type == "menu" && items.length == 0) {
+        // hide non functional buttons
+        button.hidden = true;
+      } else if (button.type == "menu") {
+        if (
+          items.length == 0 ||
+          (items.length == 1 &&
+            button.hasAttribute("oncommand") &&
+            items[0].hasAttribute("oncommand") &&
+            button.getAttribute("oncommand").endsWith(items[0].getAttribute("oncommand")))
+        ) {
+          // convert to simple button
+          button.removeAttribute("type");
+        }
+      }
+    }
+  },
+
+  /**
+   * This is our callback function that is called each time the itip bar UI needs updating.
+   * NOTE: This function is called without a valid this-context!
+   *
+   * @param itipItem      The iTIP item to set up for
+   * @param rc            The status code from processing
+   * @param actionFunc    The action function called for execution
+   * @param foundItems    An array of items found while searching for the item
+   *                      in subscribed calendars
+   */
+  setupOptions(itipItem, rc, actionFunc, foundItems) {
+    if (itipItem !== calImipBar.loadingItipItem) {
+      // The given itipItem refers to an earlier displayed message.
+      return;
+    }
+
+    let data = cal.itip.getOptionsText(itipItem, rc, actionFunc, foundItems);
+
+    if (Components.isSuccessCode(rc)) {
+      calImipBar.itipItem = itipItem;
+      calImipBar.actionFunc = actionFunc;
+      calImipBar.foundItems = foundItems;
+    }
+
+    // We need this to determine whether this is an outgoing or incoming message because
+    // Thunderbird doesn't provide a distinct flag on message level to do so. Relying on
+    // folder flags only may lead to false positives.
+    let isOutgoing = function (aMsgHdr) {
+      if (!aMsgHdr) {
+        return false;
+      }
+      let author = aMsgHdr.mime2DecodedAuthor;
+      let isSentFolder = aMsgHdr.folder && aMsgHdr.folder.flags & Ci.nsMsgFolderFlags.SentMail;
+      if (author && isSentFolder) {
+        for (let identity of MailServices.accounts.allIdentities) {
+          if (author.includes(identity.email) && !identity.fccReplyFollowsParent) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    // We override the bar label for sent out invitations and in case the event does not exist
+    // anymore, we also clear the buttons if any to avoid e.g. accept/decline buttons
+    if (isOutgoing(gMessage)) {
+      if (calImipBar.foundItems && calImipBar.foundItems[0]) {
+        data.label = cal.l10n.getLtnString("imipBarSentText");
+      } else {
+        data = {
+          label: cal.l10n.getLtnString("imipBarSentButRemovedText"),
+          buttons: [],
+          hideMenuItems: [],
+          hideItems: [],
+          showItems: [],
+        };
+      }
+    }
+
+    imipBar.label = data.label;
+    // let's reset all buttons first
+    calImipBar.resetButtons();
+    // now we update the visible items - buttons are hidden by default
+    // apart from that, we need this to adapt the accept button depending on
+    // whether three or four button style is present
+    for (let item of data.hideItems) {
+      document.getElementById(item).setAttribute("hidden", "true");
+    }
+    for (let item of data.showItems) {
+      document.getElementById(item).removeAttribute("hidden");
+    }
+    // adjust button style if necessary
+    calImipBar.conformButtonType();
+
+    calImipBar.displayModifications();
+  },
+
+  /**
+   * Displays changes in case of invitation updates in invitation overlay.
+   *
+   * NOTE: This should only be called if the invitation is already loaded in the
+   * #messagepane, in which case calImipBar.overlayLoaded should be set to true,
+   * or is guaranteed to be loaded next in #messagepane.
+   */
+  displayModifications() {
+    if (
+      !calImipBar.foundItems ||
+      !calImipBar.foundItems[0] ||
+      !calImipBar.itipItem ||
+      !Services.prefs.getBoolPref("calendar.itip.displayInvitationChanges", false)
+    ) {
+      return;
+    }
+
+    let itipItem = calImipBar.itipItem;
+    let foundEvent = calImipBar.foundItems[0];
+    let currentEvent = itipItem.getItemList()[0];
+    let diff = cal.itip.compare(currentEvent, foundEvent);
+    if (diff != 0) {
+      let newEvent;
+      let oldEvent;
+
+      if (diff == 1) {
+        // This is an update to previously accepted invitation.
+        oldEvent = foundEvent;
+        newEvent = currentEvent;
+      } else {
+        // This is a copy of a previously sent out invitation or a previous
+        // revision of a meanwhile accepted invitation, so we flip the order.
+        oldEvent = currentEvent;
+        newEvent = foundEvent;
+      }
+
+      let browser = document.getElementById("messagepane");
+      let doUpdate = () => {
+        if (Services.prefs.getBoolPref("calendar.itip.newInvitationDisplay")) {
+          return;
+        }
+        cal.invitation.updateInvitationOverlay(
+          browser.contentDocument,
+          newEvent,
+          itipItem,
+          oldEvent
+        );
+      };
+      if (calImipBar.overlayLoaded) {
+        // Document is already loaded.
+        doUpdate();
+      } else {
+        // The event is not yet shown. This can happen if setupOptions is called
+        // before CalMimeConverter.convertToHTML has finished, or the
+        // corresponding HTML string has not yet been loaded.
+        // Wait until the event is shown, then immediately update it.
+        browser.addEventListener("DOMContentLoaded", doUpdate, { once: true });
+      }
+    }
+  },
+
+  /**
+   * Executes an action triggered by an imip bar button
+   *
+   * @param   {string}  aParticipantStatus  A partstat string as per RfC 5545
+   * @param   {string}  aResponse           Either 'AUTO', 'NONE' or 'USER',
+   *                                          see calItipItem interface
+   * @returns {boolean} true, if the action succeeded
+   */
+  executeAction(aParticipantStatus, aResponse) {
+    return cal.itip.executeAction(
+      window,
+      aParticipantStatus,
+      aResponse,
+      calImipBar.actionFunc,
+      calImipBar.itipItem,
+      calImipBar.foundItems,
+      ({ resetButtons, label }) => {
+        if (label != undefined) {
+          calImipBar.label = label;
+        }
+        if (resetButtons) {
+          calImipBar.resetButtons();
+        }
+      }
+    );
+  },
+
+  /**
+   * Hide the imip bar in all windows and set a pref to prevent it from being
+   * shown again. Called when clicking the imip bar's "do not show..." menu item.
+   */
+  doNotShowImipBar() {
+    Services.prefs.setBoolPref("calendar.itip.showImipBar", false);
+    for (let window of Services.ww.getWindowEnumerator()) {
+      if (window.calImipBar) {
+        window.calImipBar.resetBar();
+      }
+    }
+  },
 };
 
-addEventListener("messagepane-loaded", ltnImipBar.load, true);
-addEventListener("messagepane-unloaded", ltnImipBar.unload, true);
+{
+  let msgHeaderView = document.getElementById("msgHeaderView");
+  if (msgHeaderView && msgHeaderView.loaded) {
+    calImipBar.load();
+  } else {
+    addEventListener("messagepane-loaded", calImipBar.load, true);
+  }
+}
+addEventListener("messagepane-unloaded", calImipBar.unload, true);
