@@ -335,7 +335,7 @@ pref("mailnews.reuse_message_window", true);
 
 pref("mailnews.open_window_warning", 10); // warn user if they attempt to open more than this many messages at once
 
-pref("mailnews.start_page.enabled", true);
+pref("mailnews.start_page.enabled", false);
 
 pref("mailnews.remember_selected_message", true);
 pref("mailnews.scroll_to_new_message", true);
@@ -377,7 +377,7 @@ pref("mail.identity.default.sig_on_reply", true); // Include signature on re?
 
 // Suppress double-dash signature separator
 pref("mail.identity.default.suppress_signature_separator", false);
- 
+
 // default to archives folder on same server.
 pref("mail.identity.default.archives_folder_picker_mode", "0");
 
@@ -558,7 +558,7 @@ pref("rss.display.disallow_mime_handlers", 0);
 //2 - use individual folder setting; if no setting default to 1
 pref("rss.show.summary", 1);
 
-// Action on double click or enter in threadpane for message with 
+// Action on double click or enter in threadpane for message with
 // header 'content-base' url (rss)
 // 0 - open content-base url in new window
 // 1 - open summary in new window
