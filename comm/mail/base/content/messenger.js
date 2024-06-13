@@ -404,7 +404,10 @@ var gMailInit = {
 				
 				// au moins un compte existant
 				// recherche mise à jour pacome
-				setTimeout(()=>{PacomeMaj.RechercheMaj();}, "10000");
+				if (Services.prefs.getBoolPref("pacome.majauto", false)){
+					let delai=Services.prefs.getIntPref("pacome.delaimaj", 10);
+					setTimeout(()=>{PacomeMaj.RechercheMaj();}, delai*1000);
+				}
       }
     } else {
       // Run the tabs restore method here since we're skipping the loading of
