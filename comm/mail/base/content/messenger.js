@@ -401,6 +401,10 @@ var gMailInit = {
       if (verifyExistingAccounts()) {
         switchToMailTab();
         await loadPostAccountWizard();
+				
+				// au moins un compte existant
+				// recherche mise à jour pacome
+				setTimeout(()=>{PacomeMaj.RechercheMaj();}, "10000");
       }
     } else {
       // Run the tabs restore method here since we're skipping the loading of
