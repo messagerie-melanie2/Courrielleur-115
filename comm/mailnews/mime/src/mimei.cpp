@@ -515,7 +515,7 @@ mime_find_class (const char *content_type, MimeHeaders *hdrs,
       // This will enable iMIP support in Lightning
       if ( hdrs && (!PL_strncasecmp(content_type, "text/calendar", 13)))
       {
-          char *full_content_type = MimeHeaders_get(hdrs, HEADER_CONTENT_TYPE, false, false);
+          char *full_content_type = MimeHeaders_get(hdrs, HEADER_CONTENT_TYPE, true, false);
           if (full_content_type)
           {
               char *imip_method = MimeHeaders_get_parameter(full_content_type, "method", NULL, NULL);
